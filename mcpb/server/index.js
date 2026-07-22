@@ -1,7 +1,9 @@
 // Stdio→HTTP shim for Claude Desktop
 const http = require('node:http');
 
-const URL_BASE = 'http://127.0.0.1:19789/mcp';
+const port = Number.parseInt(process.argv[2] || '19789', 10);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid MCP port');
+const URL_BASE = `http://127.0.0.1:${port}/mcp`;
 const RETRY_MS_MIN = 500;
 const RETRY_MS_MAX = 5000;
 const REQUEST_REPLAY_MS = 25000; // fail held requests before Claude Desktop's own 60s timeout
@@ -13,7 +15,7 @@ let reconnecting = null;     // shared promise; concurrent failures trigger one 
 let internalId = 0;
 let getStreamAbort = null;
 
-const log = (...a) => console.error('[palmier-shim]', ...a);
+const log = (...a) => console.error('[breazin-shim]', ...a);
 const writeOut = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -187,7 +189,7 @@ process.stdin.on('data', (chunk) => {
     handleClientMessage(msg).catch((err) => {
       log('unhandled error:', err.message);
       if (msg.id !== undefined) {
-        writeOut({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Palmier Pro unreachable: ${err.message}` } });
+        writeOut({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Breazin unreachable: ${err.message}` } });
       }
     });
   }

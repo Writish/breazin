@@ -9,10 +9,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: Build & Test
-    # PalmierPro targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
+    # Breazin targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -21,6 +24,13 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
+      - name: Ensure Metal toolchain
+        run: |
+          if ! xcrun --toolchain Metal --find metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --toolchain Metal --find metal
+
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
@@ -28,5 +38,27 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: Verify product identity
+        run: scripts/ci/verify-branding.sh
+
+      - name: Build
+        run: swift build
+
       - name: Test
         run: swift test
+
+      - name: Assemble development app
+        env:
+          BREAZIN_ENVIRONMENT: development
+        run: scripts/bundle.sh debug --fast --without-speech
+
+      - name: Smoke-test bundle
+        run: scripts/ci/verify-bundle.sh .build/Breazin.app development
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4

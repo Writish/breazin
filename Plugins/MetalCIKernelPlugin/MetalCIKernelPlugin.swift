@@ -6,8 +6,22 @@ import PackagePlugin
 struct MetalCIKernelPlugin: BuildToolPlugin {
     func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
         let metalDir = context.package.directoryURL.appending(path: "Metal")
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: metalDir.path()))?
-            .filter { $0.hasSuffix(".metal") } ?? []
+        // Keep inputs explicit. Directory enumeration from a build-tool plugin can
+        // silently return no entries under newer SwiftPM plugin sandboxes, producing
+        // a successful binary with every Core Image kernel missing at runtime.
+        let names = [
+            "ChromaKey.metal",
+            "Clarity.metal",
+            "Glow.metal",
+            "GradeCurves.metal",
+            "Grain.metal",
+            "HighlightsShadows.metal",
+            "HueCurves.metal",
+            "LUTTetra.metal",
+            "Levels.metal",
+            "Vignette.metal",
+            "Wheels.metal",
+        ]
 
         return names.map { file in
             let stem = (file as NSString).deletingPathExtension
@@ -19,8 +33,10 @@ struct MetalCIKernelPlugin: BuildToolPlugin {
                 executable: URL(filePath: "/bin/sh"),
                 arguments: [
                     "-c",
-                    "xcrun metal -c -fcikernel '\(metal.path())' -o '\(air.path())' && " +
-                    "xcrun metallib -cikernel '\(air.path())' -o '\(metallib.path())'",
+                    "xcrun --toolchain Metal metal -c -fcikernel '\(metal.path(percentEncoded: false))' " +
+                    "-o '\(air.path(percentEncoded: false))' && " +
+                    "xcrun --toolchain Metal metallib -cikernel '\(air.path(percentEncoded: false))' " +
+                    "-o '\(metallib.path(percentEncoded: false))'",
                 ],
                 inputFiles: [metal],
                 outputFiles: [metallib])

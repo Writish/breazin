@@ -3,10 +3,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "PalmierPro",
+    name: "Breazin",
     platforms: [.macOS(.v26)],
     products: [
-        .executable(name: "PalmierPro", targets: ["PalmierPro"]),
+        .executable(name: "Breazin", targets: ["Breazin"]),
     ],
     traits: [
         .trait(name: "BundledSpeech", description: "Include on-device speech models and MLX."),
@@ -27,7 +27,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "PalmierPro",
+            name: "Breazin",
             dependencies: [
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "Sparkle", package: "Sparkle"),
@@ -62,16 +62,20 @@ let package = Package(
                     condition: .when(traits: ["BundledSpeech"])
                 ),
             ],
-            path: "Sources/PalmierPro",
+            path: "Sources/Breazin",
             exclude: [
                 "Resources/Info.plist",
                 "Resources/AppIcon.icon",
+                "Resources/AppIcon.xcassets",
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.png",
+                "Agent/AGENTS.md",
+                "Generation/AGENTS.md",
+                "Project/AGENTS.md",
             ],
             resources: [
                 .copy("Resources/Fonts"),
-                .copy("Resources/MCPB/palmier-pro.mcpb"),
+                .copy("Resources/MCPB/breazin.mcpb"),
                 .copy("Resources/Images"),
                 .copy("Resources/Changelog"),
                 .copy("Resources/Localization"),
@@ -81,16 +85,17 @@ let package = Package(
                 .define("BUNDLED_SPEECH", .when(traits: ["BundledSpeech"])),
                 .define("PRODUCTION_TELEMETRY", .when(traits: ["ProductionTelemetry"])),
             ],
+            linkerSettings: [.linkedLibrary("sqlite3")],
             plugins: ["MetalCIKernelPlugin"]
         ),
         .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
         .testTarget(
-            name: "PalmierProTests",
+            name: "BreazinTests",
             dependencies: [
-                "PalmierPro",
+                "Breazin",
                 .product(name: "MCP", package: "swift-sdk"),
             ],
-            path: "Tests/PalmierProTests"
+            path: "Tests/BreazinTests"
         ),
     ]
 )

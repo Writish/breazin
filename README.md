@@ -1,133 +1,41 @@
-<div align="center">
-
-# Palmier Pro
-
-**The video editor built for AI.**
-
-<a href="https://github.com/palmier-io/palmier-pro/releases/latest/download/PalmierPro.dmg">
-  <img src="./assets/macos-badge.png" alt="Download Palmier Pro for macOS" width="180" />
-</a>
-
-<sub><i>Requires macOS 26 (Tahoe) on Apple Silicon</i></sub>
-
-<a href="https://x.com/Palmier_io"><img src="https://img.shields.io/badge/Follow-%40Palmier__io-000000?style=flat&logo=x&logoColor=white" alt="Follow on X" /></a>
-<a href="https://discord.com/invite/SMVW6pKYmg"><img src="https://img.shields.io/badge/Join-Discord-5865F2?style=flat&logo=discord&logoColor=white" alt="Join Discord" /></a>
-<a href="https://www.ycombinator.com/companies/palmier"><img src="https://img.shields.io/badge/Y%20Combinator-S24-orange" alt="Y Combinator S24" /></a>
-<br />
-<a href="https://trendshift.io/repositories/41342?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-41342" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/41342" alt="palmier-io%2Fpalmier-pro | Trendshift" width="250" height="55"/></a>
-
-<p>
-  <strong>English</strong> ·
-  <a href="docs/readme/README.es.md">Español</a> ·
-  <a href="docs/readme/README.zh-CN.md">简体中文</a> ·
-  <a href="docs/readme/README.zh-TW.md">繁體中文</a> ·
-  <a href="docs/readme/README.ja.md">日本語</a> ·
-  <a href="docs/readme/README.ko.md">한국어</a> ·
-  <a href="docs/readme/README.vi.md">Tiếng Việt</a> ·
-  <a href="docs/readme/README.hi.md">हिन्दी</a> ·
-  <a href="docs/readme/README.bn.md">বাংলা</a> ·
-  <a href="docs/readme/README.ar.md">العربية</a> ·
-  <a href="docs/readme/README.it.md">Italiano</a> ·
-  <a href="docs/readme/README.pt-BR.md">Português (Brasil)</a> ·
-  <a href="docs/readme/README.fr.md">Français</a> ·
-  <a href="docs/readme/README.ru.md">Русский</a> ·
-  <a href="docs/readme/README.tr.md">Türkçe</a>
+<p align="center">
+  <img src="Sources/Breazin/Resources/AppIcon.png" width="160" alt="Breazin logo">
 </p>
 
-</div>
+# Breazin（呼息）
 
-<img src="./assets/palmier-ui.png" alt="Palmier Pro UI" width="900" />
+Breazin 是一款面向 macOS 的 AI 视频编辑器。当前仓库处于产品化基础改造阶段：品牌、应用身份、数据目录、更新通道与本地 MCP 服务已经按开发、预发布、生产三套环境隔离。
 
----
+## 本地开发
 
-Palmier Pro is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
+要求 macOS 26、Xcode 26 与 Swift 6.2 或更高版本。
 
-### Swift-native video editor
-
-We built Palmier Pro from scratch with Swift. The north star is Premiere Pro, with our take on integrating AI into the workflow.
-
-### Built-in Generative AI
-
-Generate videos and images with SOTA models like Seedance, Kling, Nano Banana Pro inside the timeline editor.
-
-### Integrates with your agents
-
-Connects your Claude/Codex/Cursor via MCP, or use the in-app agent to work on the same project together.
-
-## MCP server
-
-When the app is open, it exposes an MCP server at `http://127.0.0.1:19789/mcp` via HTTP. To connect:
-
-**Claude Code**
 ```bash
-claude mcp add --transport http palmier-pro http://127.0.0.1:19789/mcp
+swift build
+swift test
+scripts/bundle.sh debug --fast --without-speech
+open .build/Breazin.app
 ```
 
-**Codex**
-```bash
-codex mcp add palmier-pro --url http://127.0.0.1:19789/mcp
-```
+`swift run Breazin` 使用 development 配置；应用包通过 `BREAZIN_ENVIRONMENT` 选择环境：
 
-**Cursor**
+| 环境 | 显示名 | Bundle ID | URL Scheme | MCP 端口 |
+| --- | --- | --- | --- | --- |
+| development | 呼息 Dev | `com.writish.breazin.dev` | `breazin-dev` | 19790 |
+| staging | 呼息 Beta | `com.writish.breazin.beta` | `breazin-beta` | 19791 |
+| production | 呼息 | `com.writish.breazin` | `breazin` | 19789 |
 
-The easiest way is go inside the app `Help` -> `MCP Instructions` -> `Install in Cursor`, or install manually by adding this to `~/.cursor/mcp.json`:
+详细配置见 [本地开发说明](docs/development/local-setup.md) 与 [环境隔离 ADR](docs/architecture/adr/0001-product-environments.md)。
 
-```
-{
-  "mcpServers": {
-    "palmier-pro": {
-      "type": "http",
-      "url": "http://127.0.0.1:19789/mcp"
-    }
-  }
-}
-```
+## 兼容与安全默认值
 
-**Claude Desktop**
+- 新项目使用 `.breazin`；旧 `.palmier` 项目仍可打开，便于用户迁移。
+- MCP 服务只监听 loopback，并且默认关闭。
+- 开发环境不启用自动更新；staging 与 production 使用彼此独立的更新源与签名配置。
+- 凭据只通过 Keychain 或环境变量注入，不进入仓库。
 
-We bundle a [mcpb](https://github.com/modelcontextprotocol/mcpb) with the app that allows a one click install Desktop Extension on Claude Desktop. Go to `Help` -> `MCP Instructions` -> `Install in Claude Desktop`
+## 上游来源与许可
 
-## FAQ
+本项目基于 Palmier Pro `v0.6.13`（commit `4ad06353ffaae0ea6e2cfc515e8f8920daa10d57`）建立。上游来源、基线结果和保留内容见 [UPSTREAM_BASELINE.md](UPSTREAM_BASELINE.md)；历史多语言文档作为来源证据保存在 `docs/upstream/`，不代表 Breazin 当前产品能力或发布渠道。
 
-**Is Palmier Pro fully open source?**
-
-The video editor (without the generative AI features) is fully open source. The MCP server and the agent chat are also open source. The only thing that is closed source is the generative AI processing.
-
-**Is it free?**
-
-The editor is free. You can download it with no login required, and use it as a video editor like CapCut or Adobe Premiere. You can also use the MCP server for free, and start experimenting using Claude Code/Desktop or Cursor to interact with your timeline editor.
-
-Generative AI features require login and subscription.
-
-**What platforms does it support?**
-
-macOS 26 (Tahoe) on Apple Silicon only.
-
-See [FAQ.md](FAQ.md) for more.
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Community &amp; Support
-
-- **Discord:** Join the community on **[Discord](https://discord.com/invite/SMVW6pKYmg)**.
-- **Twitter / X:** Follow **[@Palmier_io](https://x.com/Palmier_io)** for updates and announcements.
-- **Instagram:** Follow [@palmier.io](https://www.instagram.com/palmier.io) 
-- **Feedback &amp; Support:** Create a [Github Issue](https://github.com/palmier-io/palmier-pro/issues) or email us at founders@palmier.io
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=palmier-io%2Fpalmier-pro&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&theme=dark&legend=top-left&sealed_token=noeYrwWrpHCjd3KdAoj1jK1SLWKED61qQxKmx0oIh1oFzShl6A_eSw-ABZEgU2tm7WymnOSjnRltpeY01CPYhh6TN2aBTS9gH9Op0wMbGe1YW2J10xzGfjOtSir7GL-Nm80Wt1TCZ3bqjICSdSPQCQosZOTax4zLC_wNXYWunWmKvtcclfTbvWTd08AF" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&legend=top-left&sealed_token=noeYrwWrpHCjd3KdAoj1jK1SLWKED61qQxKmx0oIh1oFzShl6A_eSw-ABZEgU2tm7WymnOSjnRltpeY01CPYhh6TN2aBTS9gH9Op0wMbGe1YW2J10xzGfjOtSir7GL-Nm80Wt1TCZ3bqjICSdSPQCQosZOTax4zLC_wNXYWunWmKvtcclfTbvWTd08AF" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&legend=top-left&sealed_token=noeYrwWrpHCjd3KdAoj1jK1SLWKED61qQxKmx0oIh1oFzShl6A_eSw-ABZEgU2tm7WymnOSjnRltpeY01CPYhh6TN2aBTS9gH9Op0wMbGe1YW2J10xzGfjOtSir7GL-Nm80Wt1TCZ3bqjICSdSPQCQosZOTax4zLC_wNXYWunWmKvtcclfTbvWTd08AF" />
- </picture>
-</a>
-
-## License
-
-Copyright (C) 2026 Palmier, Inc.
-
-Palmier Pro is open source under [GPLv3](LICENSE).
+代码按 [GNU General Public License v3.0](LICENSE) 发布。Breazin 的商标、名称与图形资产不因代码许可证而获得额外授权。
