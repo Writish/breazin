@@ -56,6 +56,23 @@ enum ReferenceAssetStandardizer {
         }.value
     }
 
+    static func cleanup(
+        jobID: String,
+        rootDirectory: URL = AppConfiguration.current.applicationSupportDirectory
+            .appendingPathComponent("Generation/Uploads", isDirectory: true)
+    ) async {
+        guard !jobID.isEmpty,
+              jobID != ".",
+              jobID != "..",
+              !jobID.contains("/"),
+              !jobID.contains("\\")
+        else { return }
+        let directory = rootDirectory.appendingPathComponent(jobID, isDirectory: true)
+        await Task.detached(priority: .utility) {
+            try? FileManager.default.removeItem(at: directory)
+        }.value
+    }
+
     private static func standardizeImage(_ sourceURL: URL, directory: URL, uploadID: String) throws -> (URL, String) {
         guard let output = ImageEncoder.encode(url: sourceURL) else {
             throw StandardizationError(reason: "image could not be decoded")

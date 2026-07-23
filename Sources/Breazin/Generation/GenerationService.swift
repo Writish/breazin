@@ -422,8 +422,23 @@ final class GenerationService {
             do {
                 let jobs = try await self.jobStore.recoverableJobs()
                 for job in jobs where job.projectID == editor.projectId {
+                    await GenerationRecoveryCoordinator.shared.takeOverForOpenProject(jobID: job.id)
+                    guard let job = try await self.jobStore.job(id: job.id) else { continue }
                     let placeholders = sorted(editor.mediaAssets.filter { $0.generationInput?.localJobId == job.id })
                     guard !placeholders.isEmpty else { continue }
+                    if job.state == .failed || job.state == .cancelled || job.state == .needsAttention {
+                        let message: String
+                        switch job.state {
+                        case .cancelled: message = "Generation cancelled"
+                        case .needsAttention:
+                            message = "Submission state needs attention; Breazin did not resubmit to avoid duplicate charges."
+                        default: message = job.errorMessage ?? "Generation failed"
+                        }
+                        for placeholder in placeholders {
+                            self.updateGenerationMetadata(placeholder, editor: editor, status: .failed(message))
+                        }
+                        continue
+                    }
                     guard let providerJobID = job.providerJobID, !providerJobID.isEmpty else {
                         _ = try await self.jobStore.transition(
                             jobID: job.id,
@@ -450,12 +465,23 @@ final class GenerationService {
                         }
                     }
                     if job.cancelRequested {
-                        let provider = try ProviderModelCatalog.makeProvider(for: job.model)
-                        try? await provider.cancel(jobID: providerJobID)
+                        if let provider = try? ProviderModelCatalog.makeProvider(for: job.model) {
+                            try? await provider.cancel(jobID: providerJobID)
+                        }
                         _ = try await self.jobStore.transition(jobID: job.id, to: .cancelled, providerJobID: providerJobID)
                         for placeholder in placeholders {
                             self.updateGenerationMetadata(placeholder, editor: editor, status: .failed("Generation cancelled"))
                         }
+                        await self.cleanupTemporaryReferences(jobID: job.id)
+                    } else if job.state == .finalizing, !job.stagedOutputRelativePaths.isEmpty {
+                        await self.finalizeStagedSuccess(
+                            relativePaths: job.stagedOutputRelativePaths,
+                            urlStrings: job.resultURLs,
+                            placeholders: placeholders,
+                            editor: editor,
+                            onComplete: nil,
+                            onFailure: nil
+                        )
                     } else if job.state == .downloading, !job.resultURLs.isEmpty {
                         await self.finalizeSuccess(
                             urlStrings: job.resultURLs,
@@ -1016,6 +1042,98 @@ final class GenerationService {
         }
     }
 
+    private func finalizeStagedSuccess(
+        relativePaths: [String],
+        urlStrings: [String],
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        let localJobID = placeholders.first?.generationInput?.localJobId
+        var finalized: [MediaAsset] = []
+
+        for (index, placeholder) in placeholders.enumerated() {
+            let outputIndex = placeholder.generationInput?.outputIndex ?? index
+            guard outputIndex < relativePaths.count,
+                  let stagedURL = GenerationOutputStager.fileURL(
+                    relativePath: relativePaths[outputIndex]
+                  ),
+                  FileManager.default.fileExists(atPath: stagedURL.path)
+            else {
+                updateGenerationMetadata(
+                    placeholder,
+                    editor: editor,
+                    status: .failed("Recovered output is missing")
+                )
+                continue
+            }
+
+            updateGenerationMetadata(placeholder, editor: editor, status: .downloading) { input in
+                input.resultURLs = urlStrings
+            }
+            let stagedExtension = stagedURL.pathExtension.lowercased()
+            if !stagedExtension.isEmpty,
+               stagedExtension != placeholder.url.pathExtension.lowercased(),
+               ClipType(fileExtension: stagedExtension) != nil {
+                placeholder.url = placeholder.url
+                    .deletingPathExtension()
+                    .appendingPathExtension(stagedExtension)
+            }
+
+            do {
+                placeholder.url = try await editor.commitStagedProjectMedia(
+                    stagedURL,
+                    filename: placeholder.url.lastPathComponent
+                )
+                placeholder.pendingDownloadURL = nil
+                editor.importMediaAsset(placeholder, skipAppend: true)
+                if await editor.finalizeImportedAsset(placeholder) {
+                    editor.appendGenerationLog(for: placeholder)
+                    onComplete?(placeholder)
+                    finalized.append(placeholder)
+                }
+            } catch {
+                updateGenerationMetadata(
+                    placeholder,
+                    editor: editor,
+                    status: .failed(error.localizedDescription)
+                )
+            }
+        }
+
+        if let first = finalized.first {
+            if let localJobID {
+                _ = try? await jobStore.transition(
+                    jobID: localJobID,
+                    to: .succeeded,
+                    resultURLs: urlStrings
+                )
+            }
+            AppNotifications.generationComplete(
+                assetId: first.id,
+                projectURL: editor.projectURL,
+                assetName: first.name,
+                assetType: first.type,
+                count: finalized.count
+            )
+        } else {
+            if let localJobID {
+                _ = try? await jobStore.transition(
+                    jobID: localJobID,
+                    to: .failed,
+                    errorCode: "recovered_finalization_failed",
+                    errorMessage: "No staged provider output could be finalized"
+                )
+            }
+            onFailure?()
+        }
+
+        if let localJobID {
+            await cleanupTemporaryReferences(jobID: localJobID)
+        }
+    }
+
     func cancelGeneration(asset: MediaAsset, editor: EditorViewModel) {
         guard let input = asset.generationInput, let localJobID = input.localJobId else { return }
         activeTasks[localJobID]?.cancel()
@@ -1023,9 +1141,12 @@ final class GenerationService {
             do {
                 let job = try await jobStore.requestCancellation(jobID: localJobID)
                 if let providerJobID = job?.providerJobID ?? input.providerJobId {
-                    let provider = try ProviderModelCatalog.makeProvider(for: input.model)
-                    try await provider.cancel(jobID: providerJobID)
+                    if let provider = try? ProviderModelCatalog.makeProvider(for: input.model) {
+                        try? await provider.cancel(jobID: providerJobID)
+                    }
                     _ = try await jobStore.transition(jobID: localJobID, to: .cancelled, providerJobID: providerJobID)
+                } else {
+                    _ = try await jobStore.transition(jobID: localJobID, to: .cancelled)
                 }
                 await cleanupTemporaryReferences(jobID: localJobID)
                 updateGenerationMetadata(asset, editor: editor, status: .failed("Generation cancelled"))
@@ -1043,12 +1164,8 @@ final class GenerationService {
     }
 
     private func cleanupTemporaryReferences(jobID: String) async {
-        let token = await Task.detached(priority: .utility) {
-            ProviderCredentialStore.loadUploadBrokerToken()
-        }.value
-        guard let token, let client = try? UploadBrokerClient(token: token) else { return }
-        let uploader = TemporaryReferenceUploader(store: jobStore, client: client)
-        await uploader.cleanup(jobID: jobID)
+        await GenerationReferenceCleanup.run(jobID: jobID, store: jobStore)
+        await GenerationOutputStager.cleanup(jobID: jobID)
     }
 
     private static func providerKind(for type: ClipType) -> ProviderGenerationKind {

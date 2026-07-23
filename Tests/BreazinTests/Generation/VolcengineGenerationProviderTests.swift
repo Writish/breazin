@@ -133,6 +133,7 @@ struct VolcengineGenerationProviderTests {
     }
 
     @Test func providerCatalogKeepsFutureAuthBoundariesExplicit() {
+        #expect(ProviderModelCatalog.seedream5Pro == "doubao-seedream-5-0-pro-260628")
         #expect(ProviderModelCatalog.providerID(for: ProviderModelCatalog.seedream5Pro) == .init(rawValue: "volcengine-ark"))
         #expect(ProviderModelCatalog.descriptors.map(\.authentication) == [.apiKey, .oauth, .discordBot])
         #expect(ProviderModelCatalog.descriptors.map(\.isImplemented) == [true, false, false])

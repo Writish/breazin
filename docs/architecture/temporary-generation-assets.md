@@ -18,9 +18,11 @@ R2 Access Key ID and Secret Access Key exist only as Worker secrets. The client 
 
 `generation_jobs` is the execution source of truth. The project manifest stores only a stable local Job ID plus provider/result metadata needed for compatibility and presentation. `generation_uploads` owns the durable binding between each reference and the Job, including the standardized relative path, digest, opaque Broker handle, remote URL, and expiries.
 
-Remote submit uses a persisted idempotency key. The provider task ID is persisted immediately after submission. A crash with no provider task ID is marked `needs_attention`; recovery never blindly submits an ambiguous request again. Jobs with provider IDs resume polling, while provider-complete jobs with result URLs resume downloading and finalization.
+Remote submit uses a persisted idempotency key. The provider task ID is persisted immediately after submission. A crash with no provider task ID is marked `needs_attention`; recovery never blindly submits an ambiguous request again.
 
-Cancellation is intent-first. SQLite records `cancel_requested` before the provider call. If no remote task exists, the Job becomes cancelled locally. If completion races with cancellation, cancellation wins and late provider success cannot move the Job back to succeeded. Terminal states and forward progress are monotonic.
+At app launch, an app-global coordinator scans every non-terminal SQLite Job, independent of which projects are open. Jobs with provider IDs resume polling. Provider-complete jobs download result URLs to `Application Support/Generation/Outputs/<job-id>` and persist only validated relative paths in SQLite. They remain in `finalizing` until the owning project opens, at which point the project service atomically takes over, commits staged media into the project package, finalizes assets, and removes the app-level staged files. Repeated scans and project takeover cannot run the same recovery operation concurrently.
+
+Cancellation is intent-first. SQLite records `cancel_requested` before the provider call. If no remote task exists, the Job becomes cancelled locally. If a remote cancellation cannot be confirmed, local cancellation still wins and cleanup runs; a late provider success cannot move the Job back to downloading, finalizing, or succeeded. Terminal states and forward progress are monotonic.
 
 ## Authentication evolution
 

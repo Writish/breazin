@@ -5,7 +5,7 @@ enum ProviderModelCatalog {
     static let openAI: ProviderID = "openai"
     static let midjourney: ProviderID = "midjourney"
 
-    static let seedream5Pro = "doubao-seedream-5-0-260128"
+    static let seedream5Pro = "doubao-seedream-5-0-pro-260628"
     static let seedance2 = "doubao-seedance-2-0-260128"
 
     static let descriptors: [ProviderDescriptor] = [
@@ -39,7 +39,7 @@ enum ProviderModelCatalog {
             allowedEndpoints: [volcengineArk.rawValue],
             responseShape: .images,
             uiCapabilities: .image(ImageCaps(
-                resolutions: ["2K", "3K", "4K"],
+                resolutions: ["1K", "2K"],
                 aspectRatios: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
                 qualities: nil,
                 supportsImageReference: true,

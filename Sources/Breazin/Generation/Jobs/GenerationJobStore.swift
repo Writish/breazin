@@ -64,6 +64,7 @@ actor GenerationJobStore {
         to requestedState: GenerationJobState,
         providerJobID: String? = nil,
         resultURLs: [String]? = nil,
+        stagedOutputRelativePaths: [String]? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil,
         nextRetryAt: Date? = nil,
@@ -71,7 +72,10 @@ actor GenerationJobStore {
     ) throws -> GenerationJobRecord? {
         try transaction {
             guard let current = try job(id: jobID), !current.state.isTerminal else { return try job(id: jobID) }
-            let state = current.cancelRequested && requestedState == .succeeded ? .cancelled : requestedState
+            let completionStates: Set<GenerationJobState> = [.downloading, .finalizing, .succeeded]
+            let state = current.cancelRequested && completionStates.contains(requestedState)
+                ? .cancelled
+                : requestedState
             guard Self.canTransition(from: current.state, to: state) else { return current }
             try execute(
                 """
@@ -79,6 +83,7 @@ actor GenerationJobStore {
                     state = ?,
                     provider_job_id = COALESCE(?, provider_job_id),
                     result_urls = COALESCE(?, result_urls),
+                    staged_output_relative_paths = COALESCE(?, staged_output_relative_paths),
                     error_code = ?,
                     error_message = ?,
                     next_retry_at = ?,
@@ -88,6 +93,7 @@ actor GenerationJobStore {
                 """,
                 [.text(state.rawValue), providerJobID.map(Binding.text) ?? .null,
                  try resultURLs.map { .text(try json($0)) } ?? .null,
+                 try stagedOutputRelativePaths.map { .text(try json($0)) } ?? .null,
                  errorCode.map(Binding.text) ?? .null, errorMessage.map(Binding.text) ?? .null,
                  nextRetryAt.map { .double($0.timeIntervalSince1970) } ?? .null,
                  .int(incrementAttempt ? 1 : 0), .double(Date().timeIntervalSince1970), .text(jobID)]
@@ -240,6 +246,7 @@ actor GenerationJobStore {
                 attempt_count INTEGER NOT NULL DEFAULT 0,
                 next_retry_at REAL,
                 result_urls TEXT NOT NULL DEFAULT '[]',
+                staged_output_relative_paths TEXT NOT NULL DEFAULT '[]',
                 error_code TEXT,
                 error_message TEXT,
                 created_at REAL NOT NULL,
@@ -272,9 +279,24 @@ actor GenerationJobStore {
             )
             """
         )
+        if try !hasStagedOutputColumn() {
+            try execute(
+                "ALTER TABLE generation_jobs ADD COLUMN staged_output_relative_paths TEXT NOT NULL DEFAULT '[]'"
+            )
+        }
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_jobs_state ON generation_jobs(state, updated_at)")
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_uploads_job ON generation_uploads(job_id, ordinal)")
-        try execute("PRAGMA user_version = 1")
+        try execute("PRAGMA user_version = 2")
+    }
+
+    private func hasStagedOutputColumn() throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(generation_jobs)")
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let name = sqlite3_column_text(statement, 1) else { continue }
+            if String(cString: name) == "staged_output_relative_paths" { return true }
+        }
+        return false
     }
 
     private func queryJobs(_ sql: String, _ bindings: [Binding]) throws -> [GenerationJobRecord] {
@@ -296,7 +318,8 @@ actor GenerationJobStore {
               let stateValue = string(statement, "state"), let state = GenerationJobState(rawValue: stateValue),
               let idempotencyKey = string(statement, "idempotency_key"),
               let requestHash = string(statement, "request_hash"),
-              let resultsJSON = string(statement, "result_urls")
+              let resultsJSON = string(statement, "result_urls"),
+              let stagedOutputsJSON = string(statement, "staged_output_relative_paths")
         else { throw StoreError.corruptRecord("generation_job") }
         return GenerationJobRecord(
             id: id, projectID: projectID, placeholderAssetIDs: try value([String].self, placeholdersJSON),
@@ -305,6 +328,7 @@ actor GenerationJobStore {
             requestHash: requestHash, cancelRequested: integer(statement, "cancel_requested") != 0,
             attemptCount: Int(integer(statement, "attempt_count")),
             nextRetryAt: date(statement, "next_retry_at"), resultURLs: try value([String].self, resultsJSON),
+            stagedOutputRelativePaths: try value([String].self, stagedOutputsJSON),
             errorCode: string(statement, "error_code"), errorMessage: string(statement, "error_message"),
             createdAt: date(statement, "created_at") ?? .distantPast,
             updatedAt: date(statement, "updated_at") ?? .distantPast

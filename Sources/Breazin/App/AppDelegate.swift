@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task.detached(priority: .userInitiated) {
             AppCredentialPreloader.preloadForLaunch()
+            await GenerationRecoveryCoordinator.shared.start()
         }
 
         HomeWindowController.shared.showWindow(nil)

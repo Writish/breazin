@@ -35,6 +35,7 @@ struct GenerationJobRecord: Equatable, Sendable {
     let attemptCount: Int
     let nextRetryAt: Date?
     let resultURLs: [String]
+    let stagedOutputRelativePaths: [String]
     let errorCode: String?
     let errorMessage: String?
     let createdAt: Date

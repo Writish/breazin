@@ -2,11 +2,18 @@ import Foundation
 
 actor TemporaryReferenceUploader {
     private let store: GenerationJobStore
-    private let client: UploadBrokerClient
+    private let client: any UploadBrokerServing
+    private let standardizationRoot: URL
 
-    init(store: GenerationJobStore = .shared, client: UploadBrokerClient) {
+    init(
+        store: GenerationJobStore = .shared,
+        client: any UploadBrokerServing,
+        standardizationRoot: URL = AppConfiguration.current.applicationSupportDirectory
+            .appendingPathComponent("Generation/Uploads", isDirectory: true)
+    ) {
         self.store = store
         self.client = client
+        self.standardizationRoot = standardizationRoot
     }
 
     func upload(
@@ -30,7 +37,8 @@ actor TemporaryReferenceUploader {
                 sourceURL: sourceURL,
                 type: type,
                 jobID: jobID,
-                uploadID: localUploadID
+                uploadID: localUploadID,
+                rootDirectory: standardizationRoot
             )
             try await store.recordStandardizedUpload(
                 id: localUploadID,
@@ -128,5 +136,21 @@ actor TemporaryReferenceUploader {
             }
         }
         return "reference_upload_failed"
+    }
+}
+
+enum GenerationReferenceCleanup {
+    static func run(
+        jobID: String,
+        store: GenerationJobStore = .shared
+    ) async {
+        let token = await Task.detached(priority: .utility) {
+            ProviderCredentialStore.loadUploadBrokerToken()
+        }.value
+        if let token, let client = try? UploadBrokerClient(token: token) {
+            let uploader = TemporaryReferenceUploader(store: store, client: client)
+            await uploader.cleanup(jobID: jobID)
+        }
+        await ReferenceAssetStandardizer.cleanup(jobID: jobID)
     }
 }

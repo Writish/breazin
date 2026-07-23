@@ -30,7 +30,20 @@ enum UploadBrokerError: LocalizedError {
     }
 }
 
-actor UploadBrokerClient {
+protocol UploadBrokerServing: Sendable {
+    func reserve(
+        jobID: String,
+        assetID: String,
+        mediaKind: String,
+        asset: StandardizedReferenceAsset
+    ) async throws -> UploadBrokerReservation
+    func upload(fileURL: URL, reservation: UploadBrokerReservation) async throws
+    func complete(uploadHandle: String) async throws -> UploadBrokerAsset
+    func refresh(uploadHandle: String) async throws -> UploadBrokerAsset
+    func delete(uploadHandle: String) async throws
+}
+
+actor UploadBrokerClient: UploadBrokerServing {
     private let baseURL: URL
     private let token: String
     private let session: URLSession

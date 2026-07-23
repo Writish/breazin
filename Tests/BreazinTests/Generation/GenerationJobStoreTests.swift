@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import Breazin
 
@@ -86,6 +87,21 @@ struct GenerationJobStoreTests {
         #expect(stale?.state == .running)
     }
 
+    @Test func versionOneDatabaseMigratesWithoutLosingJobs() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("breazin-job-store-v1-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("jobs.sqlite3")
+        try createVersionOneDatabase(at: databaseURL)
+        let store = GenerationJobStore(databaseURL: databaseURL)
+        let job = fixtureJob()
+
+        try await store.create(job)
+        let migrated = try #require(try await store.job(id: job.id))
+
+        #expect(migrated.id == job.id)
+        #expect(migrated.stagedOutputRelativePaths.isEmpty)
+    }
+
     private func makeStore() -> GenerationJobStore {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("breazin-job-store-tests-\(UUID().uuidString)", isDirectory: true)
@@ -104,5 +120,46 @@ struct GenerationJobStoreTests {
             idempotencyKey: UUID().uuidString,
             requestHash: String(repeating: "b", count: 64)
         )
+    }
+
+    private func createVersionOneDatabase(at url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        var database: OpaquePointer?
+        guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+            throw NSError(domain: "GenerationJobStoreTests", code: 1)
+        }
+        defer { sqlite3_close(database) }
+        let sql = """
+            CREATE TABLE generation_jobs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                placeholder_asset_ids TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                provider_job_id TEXT,
+                request_hash TEXT NOT NULL,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_retry_at REAL,
+                result_urls TEXT NOT NULL DEFAULT '[]',
+                error_code TEXT,
+                error_message TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            PRAGMA user_version = 1;
+            """
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(database, sql, nil, nil, &errorMessage)
+        if let errorMessage { sqlite3_free(errorMessage) }
+        guard result == SQLITE_OK else {
+            throw NSError(domain: "GenerationJobStoreTests", code: Int(result))
+        }
     }
 }
