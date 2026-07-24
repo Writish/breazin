@@ -237,7 +237,7 @@ private struct GenerationJobInlineStatus: View {
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            if job?.state.isTerminal == false {
+            if job?.state.isActivelyProcessing == true {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: statusIcon)
@@ -254,7 +254,7 @@ private struct GenerationJobInlineStatus: View {
         guard let job else { return "Preparing" }
         return switch job.state {
         case .preparing: "Preparing"
-        case .submitting: "Submitting"
+        case .submitting: job.kind == .image ? "Waiting for provider" : "Submitting"
         case .queued: "Queued"
         case .running: "Running"
         case .downloading: "Downloading"
@@ -285,7 +285,7 @@ private struct GenerationJobInlineStatus: View {
     private func observeJob() async {
         while !Task.isCancelled {
             job = try? await GenerationJobStore.shared.job(id: jobID)
-            guard job?.state.isTerminal != true, job?.state != .needsAttention else { return }
+            guard job?.state.isActivelyProcessing == true else { return }
             try? await Task.sleep(for: .seconds(1))
         }
     }
@@ -355,7 +355,7 @@ private struct GenerationJobDetailView: View {
     private func observeJob() async {
         while !Task.isCancelled {
             job = try? await GenerationJobStore.shared.job(id: jobID)
-            guard job?.state.isTerminal != true, job?.state != .needsAttention else { return }
+            guard job?.state.isActivelyProcessing == true else { return }
             try? await Task.sleep(for: .seconds(1))
         }
     }

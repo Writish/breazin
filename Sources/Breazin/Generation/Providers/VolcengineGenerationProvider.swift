@@ -75,7 +75,12 @@ struct VolcengineGenerationProvider: GenerationProvider {
             watermark: request.options["watermark"] == "true"
         )
         let body = try JSONEncoder().encode(payload)
-        let data = try await perform(path: "/api/v3/images/generations", method: "POST", body: body)
+        let data = try await perform(
+            path: "/api/v3/images/generations",
+            method: "POST",
+            body: body,
+            timeoutInterval: ProviderSubmissionFailurePolicy.synchronousImageTimeout
+        )
         let response = try decode(ImageResponse.self, from: data)
         let urls = response.data.compactMap(\.url).compactMap(URL.init(string:))
         guard !urls.isEmpty else { throw ProviderGenerationError.invalidResponse }
@@ -148,17 +153,35 @@ struct VolcengineGenerationProvider: GenerationProvider {
         )
     }
 
-    private func perform(path: String, method: String, body: Data? = nil) async throws -> Data {
+    private func perform(
+        path: String,
+        method: String,
+        body: Data? = nil,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw ProviderGenerationError.invalidResponse
         }
-        return try await perform(url: url, method: method, body: body)
+        return try await perform(
+            url: url,
+            method: method,
+            body: body,
+            timeoutInterval: timeoutInterval
+        )
     }
 
-    private func perform(url: URL, method: String, body: Data? = nil) async throws -> Data {
+    private func perform(
+        url: URL,
+        method: String,
+        body: Data? = nil,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")

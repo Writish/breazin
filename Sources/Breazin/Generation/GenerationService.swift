@@ -689,6 +689,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
+        let kind = placeholders.first.map { Self.providerKind(for: $0.type) } ?? .image
         do {
             if let localJobID = genInput.localJobId {
                 _ = try await jobStore.transition(jobID: localJobID, to: .submitting, incrementAttempt: true)
@@ -744,16 +745,24 @@ final class GenerationService {
             }
         } catch {
             Log.generation.error("direct provider submit failed model=\(genInput.model) error=\(error.localizedDescription)")
+            let resolution = ProviderSubmissionFailurePolicy.resolve(error, kind: kind)
             if let localJobID = genInput.localJobId {
                 _ = try? await jobStore.transition(
                     jobID: localJobID,
-                    to: error is CancellationError ? .cancelled : .needsAttention,
-                    errorCode: error is CancellationError ? "cancelled" : "provider_submission_ambiguous",
-                    errorMessage: error.localizedDescription
+                    to: resolution.state,
+                    errorCode: resolution.code,
+                    errorMessage: resolution.message
                 )
+                if resolution.shouldCleanupReferences {
+                    await cleanupTemporaryReferences(jobID: localJobID)
+                }
             }
             for placeholder in placeholders {
-                updateGenerationMetadata(placeholder, editor: editor, status: .failed(error.localizedDescription))
+                updateGenerationMetadata(
+                    placeholder,
+                    editor: editor,
+                    status: .failed(resolution.message)
+                )
             }
             editor.onProjectCheckpointRequired?()
             onFailure?()

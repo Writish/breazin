@@ -19,6 +19,13 @@ enum GenerationJobState: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    var isActivelyProcessing: Bool {
+        switch self {
+        case .preparing, .submitting, .queued, .running, .downloading, .finalizing: true
+        case .succeeded, .failed, .cancelled, .needsAttention: false
+        }
+    }
+
     init(providerState: ProviderGenerationState) {
         self = switch providerState {
         case .queued: .queued
@@ -52,6 +59,93 @@ struct GenerationJobRecord: Equatable, Sendable {
     let errorMessage: String?
     let createdAt: Date
     let updatedAt: Date
+
+    var isLegacySynchronousImageTimeout: Bool {
+        kind == .image
+            && state == .needsAttention
+            && providerJobID == nil
+            && errorCode == "provider_submission_ambiguous"
+            && errorMessage?.localizedCaseInsensitiveContains("timed out") == true
+    }
+}
+
+struct ProviderSubmissionFailureResolution: Equatable, Sendable {
+    let state: GenerationJobState
+    let code: String
+    let message: String
+    let shouldCleanupReferences: Bool
+}
+
+enum ProviderSubmissionFailurePolicy {
+    static let synchronousImageTimeout: TimeInterval = 5 * 60
+    static let synchronousImageTimeoutMessage =
+        "Image generation stopped after waiting 5 minutes without a response from Volcengine. "
+        + "No task ID was returned, so Breazin cannot query or cancel this request. "
+        + "The provider may still have processed it; check Ark usage before retrying."
+
+    static func resolve(
+        _ error: any Error,
+        kind: ProviderGenerationKind
+    ) -> ProviderSubmissionFailureResolution {
+        if error is CancellationError {
+            return .init(
+                state: .cancelled,
+                code: "cancelled",
+                message: "Generation cancelled",
+                shouldCleanupReferences: true
+            )
+        }
+        if let urlError = error as? URLError,
+           urlError.code == .timedOut,
+           kind == .image {
+            return .init(
+                state: .failed,
+                code: "provider_response_timed_out",
+                message: synchronousImageTimeoutMessage,
+                shouldCleanupReferences: true
+            )
+        }
+        if let providerError = error as? ProviderGenerationError {
+            switch providerError {
+            case .remote(let code, let message):
+                return .init(
+                    state: .failed,
+                    code: code ?? "provider_rejected",
+                    message: message,
+                    shouldCleanupReferences: true
+                )
+            case .missingCredential:
+                return .init(
+                    state: .failed,
+                    code: "provider_credential_missing",
+                    message: providerError.localizedDescription,
+                    shouldCleanupReferences: true
+                )
+            case .unsupportedModel:
+                return .init(
+                    state: .failed,
+                    code: "provider_model_unsupported",
+                    message: providerError.localizedDescription,
+                    shouldCleanupReferences: true
+                )
+            case .unsupportedInput:
+                return .init(
+                    state: .failed,
+                    code: "provider_input_unsupported",
+                    message: providerError.localizedDescription,
+                    shouldCleanupReferences: true
+                )
+            case .invalidResponse:
+                break
+            }
+        }
+        return .init(
+            state: .needsAttention,
+            code: "provider_submission_ambiguous",
+            message: error.localizedDescription,
+            shouldCleanupReferences: false
+        )
+    }
 }
 
 enum GenerationUploadState: String, Codable, Sendable {

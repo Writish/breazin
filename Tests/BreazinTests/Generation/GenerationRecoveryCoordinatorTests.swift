@@ -156,6 +156,40 @@ struct GenerationRecoveryCoordinatorTests {
         #expect(await provider.statusCallCount == 0)
     }
 
+    @Test func legacySynchronousImageTimeoutBecomesTerminalWithoutRemoteRetry() async throws {
+        let store = GenerationJobStore(databaseURL: makeDatabaseURL())
+        let job = NewGenerationJob(
+            id: "job-\(UUID().uuidString)",
+            projectID: "project-1",
+            placeholderAssetIDs: ["placeholder-1"],
+            providerID: ProviderModelCatalog.volcengineArk.rawValue,
+            model: ProviderModelCatalog.seedream5Pro,
+            kind: .image,
+            idempotencyKey: UUID().uuidString,
+            requestHash: String(repeating: "c", count: 64)
+        )
+        try await store.create(job)
+        _ = try await store.transition(jobID: job.id, to: .submitting)
+        _ = try await store.transition(
+            jobID: job.id,
+            to: .needsAttention,
+            errorCode: "provider_submission_ambiguous",
+            errorMessage: "The request timed out."
+        )
+        let provider = ControlledGenerationProvider(responses: [])
+        let coordinator = makeCoordinator(store: store, provider: provider)
+
+        let summary = try await coordinator.recoverAllOnce()
+        let recovered = try #require(try await store.job(id: job.id))
+
+        #expect(summary.stopped == 1)
+        #expect(recovered.state == .failed)
+        #expect(recovered.errorCode == "provider_response_timed_out")
+        #expect(recovered.errorMessage == ProviderSubmissionFailurePolicy.synchronousImageTimeoutMessage)
+        #expect(await provider.submitCallCount == 0)
+        #expect(await provider.statusCallCount == 0)
+    }
+
     @Test func cancellationWithoutProviderIDClosesLocallyWithoutSubmission() async throws {
         let store = GenerationJobStore(databaseURL: makeDatabaseURL())
         let job = fixtureJob()

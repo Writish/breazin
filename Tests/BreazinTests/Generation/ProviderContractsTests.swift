@@ -51,4 +51,42 @@ struct ProviderContractsTests {
         #expect(!ProviderGenerationState.queued.isTerminal)
         #expect(!ProviderGenerationState.needsAttention.isTerminal)
     }
+
+    @Test func generationJobActivityExcludesNeedsAttention() {
+        #expect(GenerationJobState.preparing.isActivelyProcessing)
+        #expect(GenerationJobState.submitting.isActivelyProcessing)
+        #expect(GenerationJobState.running.isActivelyProcessing)
+        #expect(!GenerationJobState.needsAttention.isActivelyProcessing)
+        #expect(!GenerationJobState.failed.isActivelyProcessing)
+    }
+
+    @Test func synchronousImageTimeoutStopsLocallyButVideoTimeoutRemainsAmbiguous() {
+        let image = ProviderSubmissionFailurePolicy.resolve(
+            URLError(.timedOut),
+            kind: .image
+        )
+        let video = ProviderSubmissionFailurePolicy.resolve(
+            URLError(.timedOut),
+            kind: .video
+        )
+
+        #expect(image.state == .failed)
+        #expect(image.code == "provider_response_timed_out")
+        #expect(image.shouldCleanupReferences)
+        #expect(video.state == .needsAttention)
+        #expect(video.code == "provider_submission_ambiguous")
+        #expect(!video.shouldCleanupReferences)
+    }
+
+    @Test func explicitProviderRejectionIsTerminalAndPreservesCode() {
+        let resolution = ProviderSubmissionFailurePolicy.resolve(
+            ProviderGenerationError.remote(code: "ModelOverloaded", message: "Try later."),
+            kind: .image
+        )
+
+        #expect(resolution.state == .failed)
+        #expect(resolution.code == "ModelOverloaded")
+        #expect(resolution.message == "Try later.")
+        #expect(resolution.shouldCleanupReferences)
+    }
 }

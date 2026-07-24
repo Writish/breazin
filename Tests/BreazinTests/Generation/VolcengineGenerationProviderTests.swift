@@ -9,6 +9,7 @@ struct VolcengineGenerationProviderTests {
             #expect(request.url?.path == "/api/v3/images/generations")
             #expect(request.httpMethod == "POST")
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
+            #expect(request.timeoutInterval == ProviderSubmissionFailurePolicy.synchronousImageTimeout)
             let body = try #require(requestBody(request))
             let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
             #expect(json["model"] as? String == ProviderModelCatalog.seedream5Pro)

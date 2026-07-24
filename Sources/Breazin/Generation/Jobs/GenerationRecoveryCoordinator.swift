@@ -144,7 +144,18 @@ actor GenerationRecoveryCoordinator {
 
         do {
             guard let job = try await store.job(id: jobID) else { return .stopped }
-            if job.state.isTerminal || job.state == .needsAttention { return .stopped }
+            if job.state.isTerminal { return .stopped }
+            if job.isLegacySynchronousImageTimeout {
+                _ = try await store.transition(
+                    jobID: job.id,
+                    to: .failed,
+                    errorCode: "provider_response_timed_out",
+                    errorMessage: ProviderSubmissionFailurePolicy.synchronousImageTimeoutMessage
+                )
+                await cleanup(job.id)
+                return .stopped
+            }
+            if job.state == .needsAttention { return .stopped }
 
             if job.cancelRequested {
                 if let providerJobID = job.providerJobID, !providerJobID.isEmpty {
