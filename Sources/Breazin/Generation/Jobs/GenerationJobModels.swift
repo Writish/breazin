@@ -18,6 +18,17 @@ enum GenerationJobState: String, Codable, Sendable, CaseIterable {
         default: false
         }
     }
+
+    init(providerState: ProviderGenerationState) {
+        self = switch providerState {
+        case .queued: .queued
+        case .running: .running
+        case .downloading, .succeeded: .downloading
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .needsAttention: .needsAttention
+        }
+    }
 }
 
 struct GenerationJobRecord: Equatable, Sendable {
@@ -36,6 +47,7 @@ struct GenerationJobRecord: Equatable, Sendable {
     let nextRetryAt: Date?
     let resultURLs: [String]
     let stagedOutputRelativePaths: [String]
+    let providerDetails: ProviderGenerationDetails?
     let errorCode: String?
     let errorMessage: String?
     let createdAt: Date

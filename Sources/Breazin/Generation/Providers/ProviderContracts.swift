@@ -84,6 +84,50 @@ struct ProviderGenerationJob: Codable, Equatable, Sendable {
     let state: ProviderGenerationState
     let resultURLs: [URL]
     let errorCode: String?
+    let details: ProviderGenerationDetails?
+
+    init(
+        providerID: ProviderID,
+        providerJobID: String,
+        state: ProviderGenerationState,
+        resultURLs: [URL],
+        errorCode: String?,
+        details: ProviderGenerationDetails? = nil
+    ) {
+        self.providerID = providerID
+        self.providerJobID = providerJobID
+        self.state = state
+        self.resultURLs = resultURLs
+        self.errorCode = errorCode
+        self.details = details
+    }
+}
+
+struct ProviderGenerationDetails: Codable, Equatable, Sendable {
+    let status: ProviderGenerationState
+    let providerCreatedAt: Date?
+    let providerUpdatedAt: Date?
+    let checkedAt: Date
+    let usage: ProviderGenerationUsage?
+    let output: ProviderGenerationOutput?
+    let errorMessage: String?
+}
+
+struct ProviderGenerationUsage: Codable, Equatable, Sendable {
+    let generatedImages: Int?
+    let inputImages: Int?
+    let outputTokens: Int?
+    let completionTokens: Int?
+    let totalTokens: Int?
+}
+
+struct ProviderGenerationOutput: Codable, Equatable, Sendable {
+    let seed: Int?
+    let resolution: String?
+    let ratio: String?
+    let durationSeconds: Double?
+    let frames: Int?
+    let framesPerSecond: Int?
 }
 
 enum ProviderGenerationError: LocalizedError, Equatable {
@@ -127,7 +171,19 @@ protocol GenerationProvider: Sendable {
     func models() async throws -> [ProviderGenerationModel]
     func submit(_ request: ProviderGenerationRequest) async throws -> ProviderGenerationJob
     func status(jobID: String) async throws -> ProviderGenerationJob
+    func status(jobIDs: [String]) async throws -> [ProviderGenerationJob]
     func cancel(jobID: String) async throws
+}
+
+extension GenerationProvider {
+    func status(jobIDs: [String]) async throws -> [ProviderGenerationJob] {
+        var jobs: [ProviderGenerationJob] = []
+        jobs.reserveCapacity(jobIDs.count)
+        for jobID in jobIDs {
+            jobs.append(try await status(jobID: jobID))
+        }
+        return jobs
+    }
 }
 
 protocol UploadProvider: Sendable {

@@ -87,6 +87,76 @@ struct GenerationJobStoreTests {
         #expect(stale?.state == .running)
     }
 
+    @Test func providerStatusDetailsPersistAcrossTerminalStateAndReopen() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("breazin-job-details-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("jobs.sqlite3")
+        let store = GenerationJobStore(databaseURL: databaseURL)
+        let job = fixtureJob()
+        let details = ProviderGenerationDetails(
+            status: .succeeded,
+            providerCreatedAt: Date(timeIntervalSince1970: 1_784_818_800),
+            providerUpdatedAt: Date(timeIntervalSince1970: 1_784_818_860),
+            checkedAt: Date(timeIntervalSince1970: 1_784_818_861),
+            usage: ProviderGenerationUsage(
+                generatedImages: nil,
+                inputImages: nil,
+                outputTokens: nil,
+                completionTokens: 35_800,
+                totalTokens: 35_800
+            ),
+            output: ProviderGenerationOutput(
+                seed: 42,
+                resolution: "720p",
+                ratio: "16:9",
+                durationSeconds: 5,
+                frames: nil,
+                framesPerSecond: 24
+            ),
+            errorMessage: nil
+        )
+        try await store.create(job)
+        _ = try await store.transition(jobID: job.id, to: .submitting)
+        _ = try await store.transition(jobID: job.id, to: .downloading, providerJobID: "remote-details")
+        _ = try await store.transition(jobID: job.id, to: .succeeded, providerJobID: "remote-details")
+        try await store.recordProviderDetails(jobID: job.id, details: details)
+
+        let reopened = GenerationJobStore(databaseURL: databaseURL)
+        let restored = try #require(try await reopened.job(id: job.id))
+
+        #expect(restored.state == .succeeded)
+        #expect(restored.providerDetails == details)
+    }
+
+    @Test func staleProviderDetailsCannotRegressRunningToQueued() async throws {
+        let store = makeStore()
+        let job = fixtureJob()
+        try await store.create(job)
+        let running = ProviderGenerationDetails(
+            status: .running,
+            providerCreatedAt: nil,
+            providerUpdatedAt: Date(timeIntervalSince1970: 200),
+            checkedAt: Date(timeIntervalSince1970: 201),
+            usage: nil,
+            output: nil,
+            errorMessage: nil
+        )
+        let staleQueued = ProviderGenerationDetails(
+            status: .queued,
+            providerCreatedAt: nil,
+            providerUpdatedAt: Date(timeIntervalSince1970: 100),
+            checkedAt: Date(timeIntervalSince1970: 300),
+            usage: nil,
+            output: nil,
+            errorMessage: nil
+        )
+
+        try await store.recordProviderDetails(jobID: job.id, details: running)
+        try await store.recordProviderDetails(jobID: job.id, details: staleQueued)
+
+        #expect(try await store.job(id: job.id)?.providerDetails == running)
+    }
+
     @Test func versionOneDatabaseMigratesWithoutLosingJobs() async throws {
         let databaseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("breazin-job-store-v1-\(UUID().uuidString)", isDirectory: true)
@@ -100,6 +170,7 @@ struct GenerationJobStoreTests {
 
         #expect(migrated.id == job.id)
         #expect(migrated.stagedOutputRelativePaths.isEmpty)
+        #expect(migrated.providerDetails == nil)
     }
 
     private func makeStore() -> GenerationJobStore {

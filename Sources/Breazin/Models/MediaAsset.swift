@@ -44,6 +44,8 @@ final class MediaAsset: Identifiable {
         case none
         case preparing
         case generating
+        case queued
+        case running
         case downloading
         case rendering
         case failed(String)
@@ -53,6 +55,8 @@ final class MediaAsset: Identifiable {
             case .none: "none"
             case .preparing: "preparing"
             case .generating: "generating"
+            case .queued: "queued"
+            case .running: "running"
             case .downloading: "downloading"
             case .rendering: "rendering"
             case .failed(let message): "failed: \(message)"
@@ -71,6 +75,8 @@ final class MediaAsset: Identifiable {
             switch value {
             case "preparing": self = .preparing
             case "generating": self = .generating
+            case "queued": self = .queued
+            case "running": self = .running
             case "downloading": self = .downloading
             case "rendering": self = .rendering
             case let value? where value.hasPrefix("failed: "):
@@ -88,7 +94,9 @@ final class MediaAsset: Identifiable {
             || generationInput.localJobId?.isEmpty == false
     }
     var isGenerating: Bool {
-        generationStatus == .preparing || generationStatus == .generating || generationStatus == .downloading || generationStatus == .rendering
+        generationStatus == .preparing || generationStatus == .generating
+            || generationStatus == .queued || generationStatus == .running
+            || generationStatus == .downloading || generationStatus == .rendering
     }
     var isRecoveringGeneration: Bool {
         guard canResumeGeneration else { return false }
@@ -99,6 +107,8 @@ final class MediaAsset: Identifiable {
     var generatingLabel: String {
         switch generationStatus {
         case .preparing: "Preparing..."
+        case .queued: "Queued..."
+        case .running: "Running..."
         case .downloading: "Downloading..."
         case .rendering: "Rendering..."
         default: "Generating..."

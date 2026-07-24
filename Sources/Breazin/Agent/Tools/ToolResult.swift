@@ -5,6 +5,7 @@ struct ToolResult: Sendable {
     enum Block: Sendable {
         case text(String)
         case image(base64: String, mediaType: String)
+        case generationJob(id: String)
     }
 
     let content: [Block]
@@ -27,6 +28,8 @@ extension ToolResult {
                 return .text(text: s, annotations: nil, _meta: nil)
             case .image(let base64, let mime):
                 return .image(data: base64, mimeType: mime, annotations: nil, _meta: nil)
+            case .generationJob(let id):
+                return .text(text: "Generation job: \(id)", annotations: nil, _meta: nil)
             }
         }
         return .init(content: mapped, isError: isError ? true : nil)
@@ -34,7 +37,7 @@ extension ToolResult {
 }
 
 extension ToolResult.Block: Codable {
-    private enum Kind: String, Codable { case text, image }
+    private enum Kind: String, Codable { case text, image, generationJob }
     private enum CodingKeys: String, CodingKey { case kind, text, base64, mediaType }
 
     public init(from decoder: Decoder) throws {
@@ -47,6 +50,8 @@ extension ToolResult.Block: Codable {
                 base64: try c.decode(String.self, forKey: .base64),
                 mediaType: try c.decode(String.self, forKey: .mediaType)
             )
+        case .generationJob:
+            self = .generationJob(id: try c.decode(String.self, forKey: .text))
         }
     }
 
@@ -60,6 +65,9 @@ extension ToolResult.Block: Codable {
             try c.encode(Kind.image, forKey: .kind)
             try c.encode(base64, forKey: .base64)
             try c.encode(mediaType, forKey: .mediaType)
+        case .generationJob(let id):
+            try c.encode(Kind.generationJob, forKey: .kind)
+            try c.encode(id, forKey: .text)
         }
     }
 }

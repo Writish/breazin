@@ -127,6 +127,12 @@ private struct ToolRunRow: View {
     @State private var expanded = false
 
     private var isRunning: Bool { result == nil }
+    private var generationJobID: String? {
+        result?.content.compactMap {
+            if case .generationJob(let id) = $0 { return id }
+            return nil
+        }.first
+    }
     private var statusIcon: String {
         guard let result else { return "circle.dotted" }
         return result.isError ? "xmark.circle.fill" : "checkmark.circle.fill"
@@ -142,7 +148,9 @@ private struct ToolRunRow: View {
                 withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
-                    if isRunning {
+                    if let generationJobID {
+                        GenerationJobInlineStatus(jobID: generationJobID)
+                    } else if isRunning {
                         ProgressView()
                             .controlSize(.mini)
                             .frame(width: AppTheme.Spacing.md, height: AppTheme.Spacing.md)
@@ -204,6 +212,8 @@ private struct ToolRunRow: View {
                     Text(s).frame(maxWidth: .infinity, alignment: .leading)
                 case .image(let base64, _):
                     ToolResultImageView(base64: base64)
+                case .generationJob(let id):
+                    GenerationJobDetailView(jobID: id)
                 }
             }
         }
@@ -218,6 +228,136 @@ private struct ToolRunRow: View {
             return "(no args)"
         }
         return s
+    }
+}
+
+private struct GenerationJobInlineStatus: View {
+    let jobID: String
+    @State private var job: GenerationJobRecord?
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            if job?.state.isTerminal == false {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+            }
+            Text(statusLabel)
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .foregroundStyle(statusColor)
+        }
+        .task(id: jobID) { await observeJob() }
+    }
+
+    private var statusLabel: String {
+        guard let job else { return "Preparing" }
+        return switch job.state {
+        case .preparing: "Preparing"
+        case .submitting: "Submitting"
+        case .queued: "Queued"
+        case .running: "Running"
+        case .downloading: "Downloading"
+        case .finalizing: "Finalizing"
+        case .succeeded: "Succeeded"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        case .needsAttention: "Needs attention"
+        }
+    }
+
+    private var statusIcon: String {
+        switch job?.state {
+        case .succeeded: "checkmark.circle.fill"
+        case .failed, .cancelled, .needsAttention: "xmark.circle.fill"
+        default: "circle.dotted"
+        }
+    }
+
+    private var statusColor: Color {
+        switch job?.state {
+        case .succeeded: .green.opacity(AppTheme.Opacity.prominent)
+        case .failed, .cancelled, .needsAttention: .red.opacity(AppTheme.Opacity.prominent)
+        default: AppTheme.Text.tertiaryColor
+        }
+    }
+
+    private func observeJob() async {
+        while !Task.isCancelled {
+            job = try? await GenerationJobStore.shared.job(id: jobID)
+            guard job?.state.isTerminal != true, job?.state != .needsAttention else { return }
+            try? await Task.sleep(for: .seconds(1))
+        }
+    }
+}
+
+private struct GenerationJobDetailView: View {
+    let jobID: String
+    @State private var job: GenerationJobRecord?
+
+    var body: some View {
+        Group {
+            if let job {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    detail("Provider", value: job.providerID)
+                    if let providerJobID = job.providerJobID {
+                        detail("Task", value: providerJobID)
+                    }
+                    detail("Status", value: job.state.rawValue)
+                    if let providerUpdatedAt = job.providerDetails?.providerUpdatedAt {
+                        detail("Provider updated", value: providerUpdatedAt.formatted())
+                    }
+                    if let usage = job.providerDetails?.usage {
+                        if let generatedImages = usage.generatedImages {
+                            detail("Generated images", value: String(generatedImages))
+                        }
+                        if let tokens = usage.completionTokens ?? usage.outputTokens {
+                            detail("Output tokens", value: String(tokens))
+                        }
+                        if let totalTokens = usage.totalTokens {
+                            detail("Total tokens", value: String(totalTokens))
+                        }
+                    }
+                    if let output = job.providerDetails?.output {
+                        let summary = [
+                            output.resolution,
+                            output.ratio,
+                            output.durationSeconds.map { "\($0.formatted())s" },
+                            output.framesPerSecond.map { "\($0) fps" },
+                        ].compactMap { $0 }.joined(separator: " · ")
+                        if !summary.isEmpty { detail("Output", value: summary) }
+                    }
+                    if let code = job.errorCode {
+                        detail("Error", value: code)
+                    }
+                    if let message = job.errorMessage ?? job.providerDetails?.errorMessage {
+                        Text(message).foregroundStyle(.red.opacity(AppTheme.Opacity.prominent))
+                    }
+                    if let result = job.resultURLs.first.flatMap(URL.init(string:)) {
+                        Link("Open provider result URL", destination: result)
+                    }
+                }
+            } else {
+                Text("Generation job metadata unavailable.")
+            }
+        }
+        .task(id: jobID) { await observeJob() }
+    }
+
+    @ViewBuilder
+    private func detail(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.xs) {
+            Text("\(label):").foregroundStyle(AppTheme.Text.mutedColor)
+            Text(value).textSelection(.enabled)
+        }
+    }
+
+    private func observeJob() async {
+        while !Task.isCancelled {
+            job = try? await GenerationJobStore.shared.job(id: jobID)
+            guard job?.state.isTerminal != true, job?.state != .needsAttention else { return }
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 }
 

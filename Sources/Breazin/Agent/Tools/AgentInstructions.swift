@@ -90,9 +90,10 @@ enum AgentInstructions {
           regular Seedance 2.0 for the approved take, Kling v3 if Seedance errors, Grok \
           Imagine only for very simple scenes, Veo rarely.
         - Generation and url/path imports return a placeholder id and run in the background. \
-          Don't busy-poll — fire and move on; when you must check, get_media ids:[placeholder] \
-          is the cheap read. On generationStatus 'failed', tell the user and ask before \
-          re-firing.
+          Don't busy-poll — fire and move on. For provider queue/running/failure state, \
+          timestamps, output metadata, and Token usage, call get_generation_status with that \
+          mediaRef; use get_media ids:[placeholder] only for a cheap local readiness check. On \
+          failure or needs_attention, tell the user and ask before re-firing.
         - Consistency: reuse referenceMediaRefs on images; startFrameMediaRef / \
           endFrameMediaRef and the per-model reference*MediaRefs on video. Build base shots \
           before derived ones; parallelize independent generations; organize related \

@@ -13,12 +13,20 @@ final class ToolHarness {
     let executor: ToolExecutor
     let exportQueue: ExportQueue
 
-    init(timeline: Timeline = Fixtures.timeline(), exportQueue: ExportQueue = ExportQueue()) {
+    init(
+        timeline: Timeline = Fixtures.timeline(),
+        exportQueue: ExportQueue = ExportQueue(),
+        generationJobStore: GenerationJobStore = .shared
+    ) {
         let editor = EditorViewModel()
         editor.timeline = timeline
         self.editor = editor
         self.exportQueue = exportQueue
-        self.executor = ToolExecutor(editor: editor, exportQueue: exportQueue)
+        self.executor = ToolExecutor(
+            editor: editor,
+            exportQueue: exportQueue,
+            generationJobStore: generationJobStore
+        )
     }
 
     /// Run a tool by name and decode the .ok text payload as JSON.
@@ -635,6 +643,78 @@ struct ToolExecutorReadOnlyTests {
         let assets = json?["assets"] as? [[String: Any]]
         #expect(assets?.count == 1)
         #expect((assets?.first?["id"] as? String).map { a.id.hasPrefix($0) } == true)
+    }
+
+    @Test func generationStatusReturnsDurableProviderDetailsAndNativeJobBlock() async throws {
+        let store = GenerationJobStore(
+            databaseURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("generation-status-tool-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("jobs.sqlite3")
+        )
+        let h = ToolHarness(generationJobStore: store)
+        let asset = h.makeAsset(name: "Generated")
+        let jobID = UUID().uuidString.lowercased()
+        var input = GenerationInput(
+            prompt: "test",
+            model: ProviderModelCatalog.seedance2,
+            duration: 5,
+            aspectRatio: "16:9",
+            localJobId: jobID
+        )
+        input.providerId = ProviderModelCatalog.volcengineArk.rawValue
+        input.providerJobId = "task-status"
+        h.editor.mediaManifest.entries[0].generationInput = input
+        try await store.create(NewGenerationJob(
+            id: jobID,
+            projectID: "project-status",
+            placeholderAssetIDs: [asset.id],
+            providerID: ProviderModelCatalog.volcengineArk.rawValue,
+            model: ProviderModelCatalog.seedance2,
+            kind: .video,
+            idempotencyKey: UUID().uuidString,
+            requestHash: String(repeating: "a", count: 64)
+        ))
+        _ = try await store.transition(jobID: jobID, to: .submitting)
+        _ = try await store.transition(jobID: jobID, to: .running, providerJobID: "task-status")
+        try await store.recordProviderDetails(
+            jobID: jobID,
+            details: ProviderGenerationDetails(
+                status: .running,
+                providerCreatedAt: Date(timeIntervalSince1970: 1_784_818_800),
+                providerUpdatedAt: Date(timeIntervalSince1970: 1_784_818_860),
+                checkedAt: Date(timeIntervalSince1970: 1_784_818_861),
+                usage: ProviderGenerationUsage(
+                    generatedImages: nil,
+                    inputImages: nil,
+                    outputTokens: nil,
+                    completionTokens: 12_345,
+                    totalTokens: 12_345
+                ),
+                output: nil,
+                errorMessage: nil
+            )
+        )
+
+        let result = await h.runRaw(
+            "get_generation_status",
+            args: ["mediaRefs": [asset.id], "refresh": false]
+        )
+
+        #expect(!result.isError)
+        guard case .text(let text) = result.content.first,
+              let payload = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let jobs = payload["jobs"] as? [[String: Any]],
+              let job = jobs.first else {
+            Issue.record("Expected generation status JSON")
+            return
+        }
+        #expect(job["status"] as? String == "running")
+        #expect(job["providerStatus"] as? String == "running")
+        #expect((job["usage"] as? [String: Any])?["completionTokens"] as? Int == 12_345)
+        #expect(result.content.contains {
+            if case .generationJob(let id) = $0 { return id == jobID }
+            return false
+        })
     }
 
     // MARK: - list_models

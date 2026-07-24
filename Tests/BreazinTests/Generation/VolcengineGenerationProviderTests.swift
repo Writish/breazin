@@ -15,7 +15,10 @@ struct VolcengineGenerationProviderTests {
             #expect(json["prompt"] as? String == "a calm lake")
             #expect(json["size"] as? String == "2K")
             #expect(json["response_format"] as? String == "url")
-            return (200, #"{"data":[{"url":"https://assets.example/image.png"}]}"#)
+            return (
+                200,
+                #"{"created":1784818800,"data":[{"url":"https://assets.example/image.png"}],"usage":{"generated_images":1,"input_images":1,"output_tokens":16384,"total_tokens":16384}}"#
+            )
         }
         let provider = VolcengineGenerationProvider(apiKey: "test-key", session: session)
         let job = try await provider.submit(.init(
@@ -30,6 +33,9 @@ struct VolcengineGenerationProviderTests {
         #expect(job.state == .succeeded)
         #expect(job.providerJobID == "image-idem-1")
         #expect(job.resultURLs.map(\.absoluteString) == ["https://assets.example/image.png"])
+        #expect(job.details?.usage?.generatedImages == 1)
+        #expect(job.details?.usage?.inputImages == 1)
+        #expect(job.details?.usage?.outputTokens == 16_384)
     }
 
     @Test func videoSubmissionEncodesContentRolesThenPolls() async throws {
@@ -49,7 +55,10 @@ struct VolcengineGenerationProviderTests {
             }
             #expect(request.url?.path == "/api/v3/contents/generations/tasks/task-123")
             #expect(request.httpMethod == "GET")
-            return (200, #"{"id":"task-123","status":"succeeded","content":{"video_url":"https://assets.example/video.mp4"}}"#)
+            return (
+                200,
+                #"{"id":"task-123","status":"succeeded","created_at":"1784818800","updated_at":1784818860,"content":{"video_url":"https://assets.example/video.mp4","resolution":"720p","ratio":"16:9","duration":"5","framespersecond":24},"usage":{"completion_tokens":35800,"total_tokens":35800}}"#
+            )
         }
         let provider = VolcengineGenerationProvider(apiKey: "test-key", session: session)
         let firstFrame = ProviderAssetInput(
@@ -71,6 +80,33 @@ struct VolcengineGenerationProviderTests {
         let completed = try await provider.status(jobID: submitted.providerJobID)
         #expect(completed.state == .succeeded)
         #expect(completed.resultURLs.map(\.absoluteString) == ["https://assets.example/video.mp4"])
+        #expect(completed.details?.providerCreatedAt == Date(timeIntervalSince1970: 1_784_818_800))
+        #expect(completed.details?.providerUpdatedAt == Date(timeIntervalSince1970: 1_784_818_860))
+        #expect(completed.details?.usage?.completionTokens == 35_800)
+        #expect(completed.details?.usage?.totalTokens == 35_800)
+        #expect(completed.details?.output?.durationSeconds == 5)
+        #expect(completed.details?.output?.framesPerSecond == 24)
+    }
+
+    @Test func multipleVideoStatusesUseBatchQuery() async throws {
+        let session = makeSession { request in
+            #expect(request.url?.path == "/api/v3/contents/generations/tasks")
+            #expect(request.httpMethod == "GET")
+            let items = URLComponents(url: try #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItems ?? []
+            #expect(items.filter { $0.name == "filter.task_ids" }.compactMap(\.value) == ["task-a", "task-b"])
+            return (
+                200,
+                #"{"items":[{"id":"task-a","status":"queued","created_at":1784818800},{"id":"task-b","status":"running","created_at":"1784818801","updated_at":"1784818810"}],"total":2}"#
+            )
+        }
+        let provider = VolcengineGenerationProvider(apiKey: "test-key", session: session)
+
+        let jobs = try await provider.status(jobIDs: ["task-b", "task-a", "task-a"])
+
+        #expect(jobs.map(\.providerJobID) == ["task-a", "task-b"])
+        #expect(jobs.map(\.state) == [.queued, .running])
+        #expect(jobs[1].details?.providerUpdatedAt == Date(timeIntervalSince1970: 1_784_818_810))
     }
 
     @Test func remoteErrorsPreserveCodeAndSafeMessage() async throws {

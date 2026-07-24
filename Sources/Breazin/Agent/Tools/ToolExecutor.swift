@@ -16,6 +16,7 @@ final class ToolExecutor {
     private var mcpClientInfo: MCPClientInfo?
     private(set) var mcpSessionActivation = Analytics.SessionActivation()
     let exportQueue: ExportQueue
+    let generationJobStore: GenerationJobStore
 
     var editor: EditorViewModel? {
         frontmostProjectProvider == nil ? inAppEditor : sessionProject?.editorViewModel
@@ -30,18 +31,28 @@ final class ToolExecutor {
 
     var frontmostProject: VideoProject? { frontmostProjectProvider?() }
 
-    init(editor: EditorViewModel, exportQueue: ExportQueue = .shared) {
+    init(
+        editor: EditorViewModel,
+        exportQueue: ExportQueue = .shared,
+        generationJobStore: GenerationJobStore = .shared
+    ) {
         self.inAppEditor = editor
         self.frontmostProjectProvider = nil
         self.exportQueue = exportQueue
+        self.generationJobStore = generationJobStore
     }
 
-    init(projectProvider: @escaping () -> VideoProject?, exportQueue: ExportQueue = .shared) {
+    init(
+        projectProvider: @escaping () -> VideoProject?,
+        exportQueue: ExportQueue = .shared,
+        generationJobStore: GenerationJobStore = .shared
+    ) {
         let project = projectProvider()
         self.inAppEditor = nil
         self.frontmostProjectProvider = projectProvider
         self.boundProject = project
         self.exportQueue = exportQueue
+        self.generationJobStore = generationJobStore
     }
 
     func bindProject(_ project: VideoProject?) {
@@ -180,7 +191,8 @@ final class ToolExecutor {
     private static func canReadInactiveProject(_ tool: ToolName) -> Bool {
         switch tool {
         case .getTimeline, .inspectTimeline, .getMedia, .inspectMedia, .searchMedia,
-             .getMulticam, .getTranscript, .detectBeats, .inspectColor, .listModels, .sendFeedback:
+             .getMulticam, .getTranscript, .detectBeats, .inspectColor, .listModels,
+             .getGenerationStatus, .sendFeedback:
             true
         default:
             false
@@ -261,6 +273,7 @@ final class ToolExecutor {
         case .upscaleMedia:  return try upscaleMedia(editor, args)
         case .importMedia:   return try await importMedia(editor, args)
         case .listModels:    return listModels(args)
+        case .getGenerationStatus: return try await getGenerationStatus(editor, args)
         case .organizeMedia: return try organizeMedia(editor, args)
         case .sendFeedback:  return try await sendFeedback(editor, args)
         case .setProjectSettings: return try setProjectSettings(editor, args)

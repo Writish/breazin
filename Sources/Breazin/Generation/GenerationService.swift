@@ -459,7 +459,11 @@ final class GenerationService {
                     self.resumedProviderJobIds.insert(providerJobID)
                     defer { self.resumedProviderJobIds.remove(providerJobID) }
                     for placeholder in placeholders {
-                        self.updateGenerationMetadata(placeholder, editor: editor, status: .generating) { input in
+                        self.updateGenerationMetadata(
+                            placeholder,
+                            editor: editor,
+                            status: Self.mediaStatus(for: job.state)
+                        ) { input in
                             input.providerJobId = providerJobID
                             input.resultURLs = job.resultURLs
                         }
@@ -697,16 +701,21 @@ final class GenerationService {
             )
             let job = try await provider.submit(request)
             if let localJobID = genInput.localJobId {
+                try await jobStore.recordProviderDetails(jobID: localJobID, details: job.details)
                 _ = try await jobStore.transition(
                     jobID: localJobID,
-                    to: Self.localState(for: job.state),
+                    to: GenerationJobState(providerState: job.state),
                     providerJobID: job.providerJobID,
                     resultURLs: job.resultURLs.map(\.absoluteString),
                     errorCode: job.errorCode
                 )
             }
             for placeholder in placeholders {
-                updateGenerationMetadata(placeholder, editor: editor, status: .generating) { input in
+                updateGenerationMetadata(
+                    placeholder,
+                    editor: editor,
+                    status: Self.mediaStatus(for: job.state)
+                ) { input in
                     input.providerId = provider.id.rawValue
                     input.providerJobId = job.providerJobID
                     input.resultURLs = job.resultURLs.map(\.absoluteString)
@@ -763,9 +772,10 @@ final class GenerationService {
             do {
                 let job = try await provider.status(jobID: providerJobID)
                 if let localJobID = placeholders.first?.generationInput?.localJobId {
+                    try await jobStore.recordProviderDetails(jobID: localJobID, details: job.details)
                     _ = try await jobStore.transition(
                         jobID: localJobID,
-                        to: Self.localState(for: job.state),
+                        to: GenerationJobState(providerState: job.state),
                         providerJobID: providerJobID,
                         resultURLs: job.resultURLs.map(\.absoluteString),
                         errorCode: job.errorCode
@@ -777,6 +787,16 @@ final class GenerationService {
                             updateGenerationMetadata(placeholder, editor: editor, status: .failed("Generation cancelled"))
                         }
                         return
+                    }
+                }
+                for placeholder in placeholders {
+                    updateGenerationMetadata(
+                        placeholder,
+                        editor: editor,
+                        status: Self.mediaStatus(for: job.state)
+                    ) { input in
+                        input.providerJobId = providerJobID
+                        input.resultURLs = job.resultURLs.map(\.absoluteString)
                     }
                 }
                 switch job.state {
@@ -819,7 +839,9 @@ final class GenerationService {
         onFailure: (@MainActor () -> Void)?
     ) async {
         let suffix = job.errorCode.map { " (\($0))" } ?? ""
-        let message = job.state == .cancelled ? "Generation cancelled" : "Generation failed\(suffix)"
+        let message = job.state == .cancelled
+            ? "Generation cancelled"
+            : job.details?.errorMessage ?? "Generation failed\(suffix)"
         for placeholder in placeholders {
             updateGenerationMetadata(placeholder, editor: editor, status: .failed(message)) { input in
                 input.providerJobId = job.providerJobID
@@ -1177,15 +1199,27 @@ final class GenerationService {
         }
     }
 
-    private static func localState(for state: ProviderGenerationState) -> GenerationJobState {
+    private static func mediaStatus(for state: GenerationJobState) -> MediaAsset.GenerationStatus {
+        switch state {
+        case .preparing, .submitting: .preparing
+        case .queued: .queued
+        case .running: .running
+        case .downloading, .finalizing: .downloading
+        case .succeeded: .none
+        case .failed: .failed("Generation failed")
+        case .cancelled: .failed("Generation cancelled")
+        case .needsAttention: .failed("Generation needs attention")
+        }
+    }
+
+    private static func mediaStatus(for state: ProviderGenerationState) -> MediaAsset.GenerationStatus {
         switch state {
         case .queued: .queued
         case .running: .running
-        case .downloading: .downloading
-        case .succeeded: .downloading
-        case .failed: .failed
-        case .cancelled: .cancelled
-        case .needsAttention: .needsAttention
+        case .downloading, .succeeded: .downloading
+        case .failed: .failed("Generation failed")
+        case .cancelled: .failed("Generation cancelled")
+        case .needsAttention: .failed("Generation needs attention")
         }
     }
 

@@ -41,6 +41,26 @@ struct VolcengineGenerationProvider: GenerationProvider {
         return makeVideoJob(response, fallbackID: jobID)
     }
 
+    func status(jobIDs: [String]) async throws -> [ProviderGenerationJob] {
+        let uniqueIDs = Array(Set(jobIDs)).sorted()
+        guard !uniqueIDs.isEmpty else { return [] }
+        guard uniqueIDs.count <= 500,
+              var components = URLComponents(
+                url: baseURL.appendingPathComponent("/api/v3/contents/generations/tasks"),
+                resolvingAgainstBaseURL: false
+              ) else {
+            throw ProviderGenerationError.invalidResponse
+        }
+        components.queryItems = [
+            URLQueryItem(name: "page_num", value: "1"),
+            URLQueryItem(name: "page_size", value: String(uniqueIDs.count)),
+        ] + uniqueIDs.map { URLQueryItem(name: "filter.task_ids", value: $0) }
+        guard let url = components.url else { throw ProviderGenerationError.invalidResponse }
+        let data = try await perform(url: url, method: "GET")
+        let response = try decode(VideoTaskListResponse.self, from: data)
+        return response.items.map { makeVideoJob($0, fallbackID: $0.id ?? "") }
+    }
+
     func cancel(jobID: String) async throws {
         _ = try await perform(path: "/api/v3/contents/generations/tasks/\(pathComponent(jobID))", method: "DELETE")
     }
@@ -64,7 +84,16 @@ struct VolcengineGenerationProvider: GenerationProvider {
             providerJobID: "image-\(request.idempotencyKey)",
             state: .succeeded,
             resultURLs: urls,
-            errorCode: nil
+            errorCode: response.error?.code,
+            details: ProviderGenerationDetails(
+                status: .succeeded,
+                providerCreatedAt: response.created.map { Date(timeIntervalSince1970: $0) },
+                providerUpdatedAt: response.created.map { Date(timeIntervalSince1970: $0) },
+                checkedAt: Date(),
+                usage: response.usage?.providerUsage,
+                output: nil,
+                errorMessage: response.error?.message
+            )
         )
     }
 
@@ -106,7 +135,16 @@ struct VolcengineGenerationProvider: GenerationProvider {
             providerJobID: response.id ?? fallbackID,
             state: state,
             resultURLs: [response.content?.videoURL].compactMap { $0 }.compactMap(URL.init(string:)),
-            errorCode: response.error?.code
+            errorCode: response.error?.code,
+            details: ProviderGenerationDetails(
+                status: state,
+                providerCreatedAt: response.createdAt.map { Date(timeIntervalSince1970: $0) },
+                providerUpdatedAt: response.updatedAt.map { Date(timeIntervalSince1970: $0) },
+                checkedAt: Date(),
+                usage: response.usage?.providerUsage,
+                output: response.content?.providerOutput,
+                errorMessage: response.error?.message
+            )
         )
     }
 
@@ -114,6 +152,10 @@ struct VolcengineGenerationProvider: GenerationProvider {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw ProviderGenerationError.invalidResponse
         }
+        return try await perform(url: url, method: method, body: body)
+    }
+
+    private func perform(url: URL, method: String, body: Data? = nil) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
@@ -162,7 +204,34 @@ private extension VolcengineGenerationProvider {
 
     struct ImageResponse: Decodable {
         struct Item: Decodable { let url: String? }
+        struct Detail: Decodable { let code: String?; let message: String? }
+        struct Usage: Decodable {
+            let generatedImages: Int?
+            let inputImages: Int?
+            let outputTokens: Int?
+            let totalTokens: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case generatedImages = "generated_images"
+                case inputImages = "input_images"
+                case outputTokens = "output_tokens"
+                case totalTokens = "total_tokens"
+            }
+
+            var providerUsage: ProviderGenerationUsage {
+                ProviderGenerationUsage(
+                    generatedImages: generatedImages,
+                    inputImages: inputImages,
+                    outputTokens: outputTokens,
+                    completionTokens: nil,
+                    totalTokens: totalTokens
+                )
+            }
+        }
         let data: [Item]
+        let created: TimeInterval?
+        let usage: Usage?
+        let error: Detail?
     }
 
     struct VideoRequest: Encodable {
@@ -219,13 +288,78 @@ private extension VolcengineGenerationProvider {
     struct VideoTaskResponse: Decodable {
         struct Content: Decodable {
             let videoURL: String?
-            enum CodingKeys: String, CodingKey { case videoURL = "video_url" }
+            let seed: Int?
+            let resolution: String?
+            let ratio: String?
+            let duration: String?
+            let frames: Int?
+            let framesPerSecond: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case videoURL = "video_url"
+                case seed, resolution, ratio, duration, frames
+                case framesPerSecond = "framespersecond"
+            }
+
+            var providerOutput: ProviderGenerationOutput {
+                ProviderGenerationOutput(
+                    seed: seed,
+                    resolution: resolution,
+                    ratio: ratio,
+                    durationSeconds: duration.flatMap(Double.init),
+                    frames: frames,
+                    framesPerSecond: framesPerSecond
+                )
+            }
+        }
+        struct Usage: Decodable {
+            let completionTokens: Int?
+            let totalTokens: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case completionTokens = "completion_tokens"
+                case totalTokens = "total_tokens"
+            }
+
+            var providerUsage: ProviderGenerationUsage {
+                ProviderGenerationUsage(
+                    generatedImages: nil,
+                    inputImages: nil,
+                    outputTokens: nil,
+                    completionTokens: completionTokens,
+                    totalTokens: totalTokens
+                )
+            }
         }
         struct Detail: Decodable { let code: String?; let message: String? }
         let id: String?
         let status: String?
         let content: Content?
         let error: Detail?
+        let createdAt: TimeInterval?
+        let updatedAt: TimeInterval?
+        let usage: Usage?
+
+        enum CodingKeys: String, CodingKey {
+            case id, status, content, error, usage
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+            content = try container.decodeIfPresent(Content.self, forKey: .content)
+            error = try container.decodeIfPresent(Detail.self, forKey: .error)
+            usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
+            createdAt = try container.decodeFlexibleTimeIntervalIfPresent(forKey: .createdAt)
+            updatedAt = try container.decodeFlexibleTimeIntervalIfPresent(forKey: .updatedAt)
+        }
+    }
+
+    struct VideoTaskListResponse: Decodable {
+        let items: [VideoTaskResponse]
     }
 
     struct ErrorEnvelope: Decodable {
@@ -237,5 +371,15 @@ private extension VolcengineGenerationProvider {
             guard code != nil || message != nil else { return nil }
             return Detail(code: code, message: message)
         }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeFlexibleTimeIntervalIfPresent(forKey key: Key) throws -> TimeInterval? {
+        if let value = try? decodeIfPresent(TimeInterval.self, forKey: key) { return value }
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            return TimeInterval(value)
+        }
+        return nil
     }
 }

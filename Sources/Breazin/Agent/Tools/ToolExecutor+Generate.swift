@@ -107,7 +107,11 @@ extension ToolExecutor {
             projectURL: editor.projectURL,
             editor: editor
         )
-        return .ok("Edit started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(sourceAsset.name)")
+        return generationStartedResult(
+            "Edit started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(sourceAsset.name)",
+            placeholderID: placeholderId,
+            editor: editor
+        )
     }
 
     private func generateVideoText(
@@ -179,7 +183,11 @@ extension ToolExecutor {
         let refSummary = totalRefs > 0
             ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
             : ""
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), duration: \(duration)s, aspect: \(aspectRatio)\(refSummary)")
+        return generationStartedResult(
+            "Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), duration: \(duration)s, aspect: \(aspectRatio)\(refSummary)",
+            placeholderID: placeholderId,
+            editor: editor
+        )
     }
 
     private func generateImage(
@@ -227,7 +235,26 @@ extension ToolExecutor {
             projectURL: editor.projectURL,
             editor: editor
         )
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), aspect: \(aspectRatio)")
+        return generationStartedResult(
+            "Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), aspect: \(aspectRatio)",
+            placeholderID: placeholderId,
+            editor: editor
+        )
+    }
+
+    private func generationStartedResult(
+        _ message: String,
+        placeholderID: String,
+        editor: EditorViewModel
+    ) -> ToolResult {
+        guard let jobID = editor.mediaAssets.first(where: { $0.id == placeholderID })?
+            .generationInput?.localJobId else {
+            return .ok(message)
+        }
+        return ToolResult(
+            content: [.text(message), .generationJob(id: jobID)],
+            isError: false
+        )
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {

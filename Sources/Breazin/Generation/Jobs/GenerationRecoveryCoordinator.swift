@@ -184,12 +184,14 @@ actor GenerationRecoveryCoordinator {
 
             let provider = try providerFactory(job.model)
             let remote = try await provider.status(jobID: providerJobID)
+            try await store.recordProviderDetails(jobID: job.id, details: remote.details)
             let updated = try await store.transition(
                 jobID: job.id,
-                to: Self.localState(for: remote.state),
+                to: GenerationJobState(providerState: remote.state),
                 providerJobID: providerJobID,
                 resultURLs: remote.resultURLs.map(\.absoluteString),
-                errorCode: remote.errorCode
+                errorCode: remote.errorCode,
+                errorMessage: remote.details?.errorMessage
             )
 
             guard let updated else { return .stopped }
@@ -255,14 +257,4 @@ actor GenerationRecoveryCoordinator {
         return .waitingForProject
     }
 
-    private static func localState(for state: ProviderGenerationState) -> GenerationJobState {
-        switch state {
-        case .queued: .queued
-        case .running: .running
-        case .downloading, .succeeded: .downloading
-        case .failed: .failed
-        case .cancelled: .cancelled
-        case .needsAttention: .needsAttention
-        }
-    }
 }

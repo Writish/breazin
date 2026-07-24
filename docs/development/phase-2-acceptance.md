@@ -1,6 +1,6 @@
 # Phase 2 acceptance record
 
-Recorded 2026-07-23. This record separates deterministic local contracts, read-only checks against currently deployed Cloudflare resources, and production end-to-end work that still requires operator credentials or paid-generation approval.
+Recorded 2026-07-23 and updated 2026-07-24. This record separates deterministic local contracts, operator-observed Beta evidence, read-only checks against currently deployed Cloudflare resources, and production end-to-end work that still requires explicit credentials or paid-generation approval.
 
 ## Acceptance matrix
 
@@ -10,10 +10,13 @@ Recorded 2026-07-23. This record separates deterministic local contracts, read-o
 | Provider output staging | Passed locally | Generated URLs are downloaded to app support, persisted as job-relative paths, rejected on path traversal, transferred to the project when opened, and cleaned after terminal handling. |
 | Reference normalization and binding | Passed locally | Image streaming checksum, MP4/H.264 normalization, M4A/AAC normalization, Broker reserve/upload/complete/refresh/delete, and SQLite Job/upload binding are automated. |
 | Volcengine request contracts | Passed locally | Seedream synchronous image and Seedance asynchronous video request mapping, content roles, polling states, cancellation, expiry, and safe remote errors are automated against fixtures. |
+| Provider status observability | Passed locally | Seedance single-task and multi-task status queries, provider timestamps, queued/running/succeeded/failed/cancelled mapping, output metadata, Token usage, SQLite v3 persistence, AI Chat status receipts, and native result links are automated. A status-query timeout is reported as a transient refresh error rather than falsely marking a paid generation terminal. |
 | Upload Broker handler contracts | Passed locally | Health, missing/wrong authentication, presigned URL generation, R2 object metadata/size validation, complete, refresh, delete, missing object, expired handle, tampered handle, and lifecycle JSON are automated. |
 | Cloudflare staging resources | Partially verified live | Wrangler authentication, three R2 buckets, staging deployment, required secret names, staging health `200`, unauthenticated upload `401`, and active `tmp/` two-day lifecycle rule were checked against the Cloudflare account. |
-| Authenticated staging object round trip | **Not verified** | The acceptance session had no recoverable staging Broker token. The new local Worker acceptance changes were not deployed. No authenticated presigned `PUT`, object read, `complete`, `refresh`, or `delete` result is claimed for the deployed staging Worker. |
-| Seedream/Seedance paid generation | **Not verified** | No Volcengine Ark API key was available in the checked Breazin environments and no paid request was authorized. Provider billing, live model availability, generated media download, and production latency remain unverified. |
+| Authenticated staging client flow | Partially verified live | A Beta Seedance run reserved an upload, completed an authenticated presigned JPEG `PUT`, submitted the resulting reference, and deleted the bound upload after terminal success. The standalone acceptance harness, explicit byte read, URL refresh, and real-time expiry remain unverified; the local acceptance-only Worker revision remains undeployed. |
+| Seedance paid generation | Passed once in Beta | On 2026-07-23 the operator completed one Seedance 2.0 image-reference video generation. SQLite recorded a provider task ID, one result URL, terminal `succeeded`, and deleted reference-upload state, which implies submit → status polling → download/project finalization → cleanup completed. This is one operator-observed flow, not a latency or reliability benchmark. |
+| Seedream paid generation | **Not verified successful** | The attempted Seedream 5.0 Pro request was rejected by the account's Safe Experience Mode inference limit. No successful paid Seedream output is claimed. |
+| Crash recovery with accepted provider task | **Not verified live** | The exit/relaunch drill occurred before a provider task ID was persisted, so the job correctly became `needs_attention`. It does not verify resuming a genuinely queued/running remote task. |
 
 ## Automated commands
 
@@ -24,6 +27,18 @@ CLANG_MODULE_CACHE_PATH=/tmp/breazin-clang-cache \
 SWIFTPM_MODULECACHE_OVERRIDE=/tmp/breazin-swiftpm-cache \
 swift test --filter 'GenerationRecoveryCoordinatorTests|GenerationOutputStagerTests|TemporaryReferenceUploaderTests|VolcengineGenerationProviderTests|ReferenceAssetStandardizerTests|GenerationJobStoreTests'
 ```
+
+The 2026-07-24 status-observability follow-up additionally ran:
+
+```bash
+swift test --filter 'VolcengineGenerationProviderTests|GenerationJobStoreTests|GenerationRecoveryCoordinatorTests|ToolExecutorTests'
+```
+
+This selected run passed 144 tests in 9 suites.
+The final unfiltered `swift test --skip-build` regression passed 1,182 tests in
+183 suites. A staging smoke bundle was also assembled on a local volume and
+passed `scripts/ci/verify-bundle.sh` with display name `呼息 Beta` and bundle ID
+`com.writish.breazin.beta`.
 
 Broker:
 
@@ -64,9 +79,9 @@ The harness creates a unique tiny PNG object, validates authenticated upload and
 1. Enter the Volcengine Ark API key and staging Broker token in the matching Breazin environment settings/Keychain, then fully relaunch the app so launch preloading and global recovery use them.
 2. With a test project open, generate one low-cost Seedream 5.0 Pro 1K image from a local image reference. Confirm normalization, R2 upload, URL refresh if applicable, provider response, output download, project media creation, SQLite terminal state, and R2 cleanup.
 3. Generate one minimum-duration Seedance 2.0 video with representative local image/video/audio references. Confirm standardized MP4/H.264 and M4A/AAC inputs, provider role mapping, polling, result download, project persistence, and cleanup.
-4. Run a recovery drill: close the project and terminate the app during `queued` or `running`, relaunch without opening the project, then confirm polling/download staging resumes without another submit or duplicate charge. Open the project and confirm finalization.
+4. Run a recovery drill only after AI Chat shows a persisted Provider Task ID and the state `queued` or `running`: close the project and terminate the app, relaunch without opening the project, then confirm polling/download staging resumes without another submit or duplicate charge. Open the project and confirm finalization.
 5. Run a cancellation drill near provider completion and confirm SQLite ends `cancelled`, late success cannot win, and temporary references/staged outputs are removed.
 
 Record provider request IDs, timings, final SQLite states, generated asset locations, and object deletion results without recording API keys, Broker tokens, signed URLs, prompts, or absolute local source paths.
 
-Official references: [Cloudflare R2 presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/), [Cloudflare R2 object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/), [Seedance 2.0 overview](https://www.volcengine.com/docs/82379/1520758?lang=zh), [Seedance task creation](https://www.volcengine.com/docs/82379/1520757?lang=zh), [Seedream image generation](https://www.volcengine.com/docs/82379/1541523?lang=zh), and [Volcengine generation overview](https://www.volcengine.com/docs/82379/1824137?lang=zh).
+Official references: [Cloudflare R2 presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/), [Cloudflare R2 object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/), [Seedance 2.0 overview](https://www.volcengine.com/docs/82379/1520758?lang=zh), [Seedance task creation](https://www.volcengine.com/docs/82379/1520757?lang=zh), [single-task status](https://www.volcengine.com/docs/82379/1521309?lang=zh), [multi-task status](https://www.volcengine.com/docs/82379/1521675?lang=zh), [Seedream image generation](https://www.volcengine.com/docs/82379/1541523?lang=zh), and [Volcengine generation overview](https://www.volcengine.com/docs/82379/1824137?lang=zh).

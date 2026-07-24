@@ -58,6 +58,41 @@ actor GenerationJobStore {
         )
     }
 
+    func jobs(projectID: String, includeTerminal: Bool = true) throws -> [GenerationJobRecord] {
+        try openIfNeeded()
+        if includeTerminal {
+            return try queryJobs(
+                "SELECT * FROM generation_jobs WHERE project_id = ? ORDER BY created_at DESC",
+                [.text(projectID)]
+            )
+        }
+        let terminals = [GenerationJobState.succeeded, .failed, .cancelled].map(\.rawValue)
+        return try queryJobs(
+            """
+            SELECT * FROM generation_jobs
+            WHERE project_id = ? AND state NOT IN (?, ?, ?)
+            ORDER BY created_at DESC
+            """,
+            [.text(projectID)] + terminals.map(Binding.text)
+        )
+    }
+
+    func recordProviderDetails(jobID: String, details: ProviderGenerationDetails?) throws {
+        guard let details else { return }
+        try transaction {
+            guard let current = try job(id: jobID),
+                  Self.shouldRecord(details, after: current.providerDetails) else { return }
+            try execute(
+                "UPDATE generation_jobs SET provider_details = ?, updated_at = ? WHERE id = ?",
+                [
+                    .text(try json(details)),
+                    .double(Date().timeIntervalSince1970),
+                    .text(jobID),
+                ]
+            )
+        }
+    }
+
     @discardableResult
     func transition(
         jobID: String,
@@ -247,6 +282,7 @@ actor GenerationJobStore {
                 next_retry_at REAL,
                 result_urls TEXT NOT NULL DEFAULT '[]',
                 staged_output_relative_paths TEXT NOT NULL DEFAULT '[]',
+                provider_details TEXT,
                 error_code TEXT,
                 error_message TEXT,
                 created_at REAL NOT NULL,
@@ -284,17 +320,24 @@ actor GenerationJobStore {
                 "ALTER TABLE generation_jobs ADD COLUMN staged_output_relative_paths TEXT NOT NULL DEFAULT '[]'"
             )
         }
+        if try !hasColumn("provider_details", in: "generation_jobs") {
+            try execute("ALTER TABLE generation_jobs ADD COLUMN provider_details TEXT")
+        }
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_jobs_state ON generation_jobs(state, updated_at)")
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_uploads_job ON generation_uploads(job_id, ordinal)")
-        try execute("PRAGMA user_version = 2")
+        try execute("PRAGMA user_version = 3")
     }
 
     private func hasStagedOutputColumn() throws -> Bool {
-        let statement = try prepare("PRAGMA table_info(generation_jobs)")
+        try hasColumn("staged_output_relative_paths", in: "generation_jobs")
+    }
+
+    private func hasColumn(_ column: String, in table: String) throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(\(table))")
         defer { sqlite3_finalize(statement) }
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let name = sqlite3_column_text(statement, 1) else { continue }
-            if String(cString: name) == "staged_output_relative_paths" { return true }
+            if String(cString: name) == column { return true }
         }
         return false
     }
@@ -329,6 +372,9 @@ actor GenerationJobStore {
             attemptCount: Int(integer(statement, "attempt_count")),
             nextRetryAt: date(statement, "next_retry_at"), resultURLs: try value([String].self, resultsJSON),
             stagedOutputRelativePaths: try value([String].self, stagedOutputsJSON),
+            providerDetails: try string(statement, "provider_details").map {
+                try value(ProviderGenerationDetails.self, $0)
+            },
             errorCode: string(statement, "error_code"), errorMessage: string(statement, "error_message"),
             createdAt: date(statement, "created_at") ?? .distantPast,
             updatedAt: date(statement, "updated_at") ?? .distantPast
@@ -457,5 +503,25 @@ actor GenerationJobStore {
         case .needsAttention: [.running, .downloading].contains(next)
         case .succeeded, .failed, .cancelled: false
         }
+    }
+
+    private static func shouldRecord(
+        _ incoming: ProviderGenerationDetails,
+        after current: ProviderGenerationDetails?
+    ) -> Bool {
+        guard let current else { return true }
+        let rank: (ProviderGenerationState) -> Int = {
+            switch $0 {
+            case .queued: 0
+            case .running, .needsAttention: 1
+            case .downloading, .succeeded, .failed, .cancelled: 2
+            }
+        }
+        guard rank(incoming.status) >= rank(current.status) else { return false }
+        if let incomingUpdated = incoming.providerUpdatedAt,
+           let currentUpdated = current.providerUpdatedAt {
+            return incomingUpdated >= currentUpdated
+        }
+        return incoming.checkedAt >= current.checkedAt
     }
 }

@@ -60,6 +60,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     // Generation
     case listModels = "list_models"
+    case getGenerationStatus = "get_generation_status"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
     case generateAudio = "generate_audio"
@@ -929,6 +930,17 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "type": ["type": "string", "enum": ["video", "image", "audio", "upscale"], "description": "Filter by type. Omit to list all models."],
+                ]
+            )
+        ),
+        AgentTool(
+            name: .getGenerationStatus,
+            description: "Reads durable AI generation jobs for the current project. Pass mediaRefs returned by generate_video or generate_image to inspect specific jobs; omit them to list recent jobs. refresh=true queries Volcengine directly: one task uses the single-task API and multiple tasks use the batch API. Returns provider task status (preparing/submitting/queued/running/downloading/finalizing/succeeded/failed/cancelled/needs_attention), provider timestamps, output metadata, Token usage, and actionable errors. Provider result URLs are exposed only as native user-openable links in Breazin so temporary signed credentials are never sent to the chat model. Do not busy-poll; check when the user asks, after a meaningful wait, or before using a generated asset.",
+            inputSchema: objectSchema(
+                properties: [
+                    "mediaRefs": ["type": "array", "items": ["type": "string"], "description": "Optional generated placeholder/media asset IDs. Omit to list recent generation jobs in this project."],
+                    "refresh": ["type": "boolean", "description": "Default true. Queries the provider before returning. false reads only local durable state."],
+                    "includeCompleted": ["type": "boolean", "description": "Default true. false returns only unresolved jobs."],
                 ]
             )
         ),

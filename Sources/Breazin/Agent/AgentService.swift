@@ -622,6 +622,8 @@ final class AgentService {
                 case .text(let s): return ["type": "text", "text": s]
                 case .image(let base64, let mime):
                     return ["type": "image", "source": ["type": "base64", "media_type": mime, "data": base64]]
+                case .generationJob(let id):
+                    return ["type": "text", "text": "Generation job: \(id)"]
                 }
             }
             return [

@@ -78,6 +78,10 @@ extension ToolExecutor {
                 throw ToolError("Asset \(asset.id) is still downloading. Poll get_media and retry once generationStatus becomes 'none'.")
             case .generating:
                 throw ToolError("Asset \(asset.id) is still generating. Poll get_media and retry once generationStatus becomes 'none'.")
+            case .queued:
+                throw ToolError("Asset \(asset.id) is queued at the provider. Check get_generation_status or retry once generationStatus becomes 'none'.")
+            case .running:
+                throw ToolError("Asset \(asset.id) is running at the provider. Check get_generation_status or retry once generationStatus becomes 'none'.")
             case .rendering:
                 throw ToolError("Asset \(asset.id) is still rendering. Poll get_media and retry once generationStatus becomes 'none'.")
             case .failed(let msg):
