@@ -27,8 +27,10 @@ Every gate below must be green for the exact candidate artifact.
   object metadata and byte validation, complete, GET, refresh, delete, and
   post-delete `404`. The two-day `tmp/` lifecycle rule must be enabled.
 - Staging version `319267f7-014a-45e2-b6d9-82582592d43d` passes deployment/configuration, health,
-  unauthenticated rejection, and lifecycle checks. Its authenticated round trip
-  remains pending until the test Mac is unlocked for the Beta Keychain read.
+  unauthenticated rejection, lifecycle checks, and the authenticated
+  checksum-bound round trip. The 2026-07-28 harness used the existing Beta
+  Keychain credential without printing it and passed PUT, R2 byte validation,
+  complete, GET, refresh, delete, and post-delete rejection.
 
 ## Project schema and persistence contract
 
@@ -51,8 +53,9 @@ Before giving the app to any external tester:
 
 1. Run the complete client and Broker suites on the release commit and retain the
    deterministic/scenario artifacts.
-2. Complete the authenticated staging Broker round trip and the manual MCP/Agent
-   checks above with the exact Beta bundle.
+2. Repeat the authenticated staging Broker round trip if the Worker or candidate
+   credential changes, and complete the manual MCP/Agent checks above with the
+   exact Beta bundle.
 3. Build once with the Beta identifiers, sign with Developer ID, submit for Apple
    notarization, staple the ticket, and verify on a clean Mac. Ad-hoc signing is
    internal-only evidence.

@@ -46,12 +46,14 @@ billing runtime references. Remaining Palmier strings are limited to:
 - decode-only legacy project fields;
 - the checksummed public visual-search model namespace.
 
-The last complete regression before the lifecycle audit passed 1,232 tests in
-188 suites. `swift build --traits BundledSpeech` and the staging bundle verifier
-also passed. The lifecycle audit adds tests for stale Broker-handle expiry and
-provider `needs_attention` polling termination; its application graph compiles,
-and the updated full test count must be recorded after the Mac is unlocked and
-the test bundle can launch.
+The lifecycle audit's focused provider/recovery/store run passed 30 tests in
+three suites. GitHub Actions run `30359329719` passed the exact feature branch
+with 1,234 tests in 188 suites, assembled the Development app, and passed its
+bundle smoke check. `swift build --traits BundledSpeech` and the staging bundle
+verifier also passed; the current internal artifact is
+`/tmp/breazin-beta-audit-final/Breazin.app`. The PR additionally passes
+product-identity and Dependency Review checks after CI installed `ripgrep` and
+the repository Dependency graph was enabled.
 
 ## Unverified or deferred
 

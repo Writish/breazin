@@ -14,16 +14,16 @@ Recorded 2026-07-23 and updated 2026-07-28. This record separates deterministic 
 | Provider status observability | Passed locally | Seedance single-task and multi-task status queries, provider timestamps, queued/running/succeeded/failed/cancelled mapping, output metadata, Token usage, SQLite v3 persistence, AI Chat status receipts, and native result links are automated. `needs_attention` is actionable but not actively processing, so it no longer renders an endless spinner. A task-status query timeout remains a transient refresh error. |
 | Seedream synchronous timeout | Passed locally and superseded by a successful live retry | Beta evidence showed the former URLSession default ending the synchronous request after about 63 seconds without an HTTP response, task ID, result URL, or usage. Seedream now waits up to five minutes. If that response also times out, the local job becomes terminal `failed`, temporary references are cleaned, and the UI warns that Ark may still have processed the request because there is no task ID to query or cancel. Legacy matching `needs_attention` rows are closed on launch without resubmission. |
 | Upload Broker handler contracts | Passed locally | Health, missing/wrong per-device authentication, subject/device handle binding, cross-device rejection, presigned URL generation, signed R2 SHA-256 byte verification, object metadata/size validation, complete, refresh, delete, missing object, expired handle, tampered handle, and lifecycle JSON are automated. |
-| Cloudflare staging resources | Passed live for deployment/configuration; authenticated data path pending | Per-device/checksum Worker version `319267f7-014a-45e2-b6d9-82582592d43d` (source tag `platform-84f64ac`) was deployed at 100% by deployment `567a76e3-82d7-44e5-b7db-416656ab58d6` on 2026-07-28. Its uploaded bundle SHA-256 is `d2a57b4d792c8e6c9d9708abed59c8a4bdb8609f264f2bdbd33e395709a90bcf`. Current bindings contain the five required secrets and no `BROKER_TOKEN`; staging health returned `200`, unauthenticated upload creation returned `401`, and the active `tmp/` lifecycle rule remains two days. Wrangler CLI login had expired, so immutable version/deployment and bindings were verified through the Cloudflare account API rather than claimed as a Wrangler deployment. |
-| Authenticated staging client flow | Previous Beta path passed; new per-device revision not yet fully verified | A prior Beta Seedance run reserved an upload, completed an authenticated presigned JPEG `PUT`, submitted the resulting reference, and deleted the bound upload after terminal success. A new per-device credential is installed in the Beta Keychain and registered in the deployed Worker. The standalone object-byte/refresh/delete harness is blocked on a Keychain read while the test Mac is locked; it is not claimed as passed. Real-time expiry also remains unverified. |
+| Cloudflare staging resources | Passed live | Per-device/checksum Worker version `319267f7-014a-45e2-b6d9-82582592d43d` (source tag `platform-84f64ac`) was deployed at 100% by deployment `567a76e3-82d7-44e5-b7db-416656ab58d6` on 2026-07-28. Its uploaded bundle SHA-256 is `d2a57b4d792c8e6c9d9708abed59c8a4bdb8609f264f2bdbd33e395709a90bcf`. Current bindings contain the five required secrets and no `BROKER_TOKEN`; staging health returned `200`, unauthenticated upload creation returned `401`, and the active `tmp/` lifecycle rule remains two days. Wrangler CLI login had expired, so immutable version/deployment and bindings were verified through the Cloudflare account API rather than claimed as a Wrangler deployment. |
+| Authenticated staging client flow | Passed live for the deployed per-device/checksum revision | On 2026-07-28 the acceptance harness read the existing credential and device ID from the unlocked Beta Keychain without printing either value. Against `uploads-staging.breazin.com` it passed health, per-device authentication, checksum-bound presigned PNG `PUT`, R2 object metadata and byte validation, complete, asset `GET`, refresh, delete, and post-delete rejection. A prior Beta Seedance run separately exercised the client reserve/upload/provider/finalization/cleanup path. Handle expiry is deterministic in local tests; a wall-clock short-TTL staging exercise remains optional production evidence rather than claimed here. |
 | Seedance paid generation | Passed once in Beta | On 2026-07-23 the operator completed one Seedance 2.0 image-reference video generation. SQLite recorded a provider task ID, one result URL, terminal `succeeded`, and deleted reference-upload state, which implies submit → status polling → download/project finalization → cleanup completed. This is one operator-observed flow, not a latency or reliability benchmark. |
 | Seedream paid generation | Passed once in Beta | On 2026-07-25 the operator completed a Seedream 5.0 Pro image generation after the timeout fix. SQLite recorded one attempt, a provider task ID, one result, 4,450 output/total Tokens, terminal `succeeded`, and deleted reference-upload state. The end-to-end local duration was about 129 seconds. |
 | Crash recovery with accepted provider task | Passed once in Beta; unopened-project staging remains local-contract evidence | On 2026-07-28 a Seedance job was created, the app exited while it was active, and a new process launched 31 seconds later. The job later reached `succeeded` with one attempt, the original provider task ID, one result, 108,900 total Tokens, and deleted upload state. This verifies restart recovery without resubmission and project finalization. The project was opened before the local terminal write, so this run does not independently prove output staging completed while no project was open. |
 
-Strict Phase 2 is closed by the local implementation and deterministic
-acceptance above. The remaining authenticated per-device staging exercise and
-future paid drills remain explicitly scoped as additional production evidence
-rather than being promoted to live proof.
+Strict Phase 2 is closed by the local implementation, deterministic acceptance,
+the deployed checksum-bound Broker round trip, and the paid Beta evidence above.
+Future cancellation-near-completion, unopened-project, and wall-clock-expiry
+drills remain explicitly scoped as additional production evidence.
 
 ## Operator-observed Beta timeline
 
@@ -122,6 +122,20 @@ coverage. After removing the final obsolete Clerk/Convex bundle configuration
 and credits localization resources, the unfiltered regression passed 1,232
 tests in 188 suites.
 
+The final lifecycle and PR closure ran:
+
+```bash
+swift test --filter 'ProviderContractsTests|GenerationRecoveryCoordinatorTests|GenerationJobStoreTests'
+```
+
+This run passed 30 tests in 3 suites. GitHub Actions run `30359329719` then
+passed the exact feature-branch regression with 1,234 tests in 188 suites and
+assembled and smoke-verified the Development app. The first local unfiltered
+attempt exposed a macOS 26 system-service initialization interlock between
+AudioComponent registration and AppKit haptic/SkyLight startup; it was sampled
+and stopped after making no progress. No assertion failed, and the same commit's
+clean macOS 26 CI run is the accepted complete-regression result.
+
 A replacement staging smoke bundle containing the timeout fix was assembled at
 `/private/tmp/breazin-beta-timeout/Breazin.app` with bundled speech disabled and
 passed:
@@ -133,8 +147,8 @@ scripts/ci/verify-bundle.sh /private/tmp/breazin-beta-timeout/Breazin.app stagin
 The verifier confirmed the staging identity and a valid ad-hoc signature. AI
 Chat and cloud image/video generation remain present in this smoke bundle.
 
-The final internal staging artifact was rebuilt at
-`/tmp/breazin-beta-final/Breazin.app` and passed the same staging bundle verifier,
+The final internal staging artifact was rebuilt from the PR head at
+`/tmp/breazin-beta-audit-final/Breazin.app` and passed the same staging bundle verifier,
 including Beta identity, MCP metadata, and strict deep codesign verification.
 It is ad-hoc signed, not Developer ID signed or notarized, and therefore is not
 an external-distribution artifact.
@@ -150,9 +164,8 @@ npx wrangler deploy --dry-run --env staging
 `npm run check` passed generated types, TypeScript compilation, six Vitest
 contracts, acceptance-script syntax, and lifecycle configuration. Wrangler
 dry-run produced a 26.36 KiB Worker bundle. Dry-run proves only local
-buildability; the separate immutable deployment evidence is recorded in the
-matrix above and still does not prove the pending authenticated object
-round trip.
+buildability; the separate immutable deployment and authenticated object
+round-trip evidence are recorded in the matrix above.
 
 ## Operator acceptance: Cloudflare staging
 
@@ -178,7 +191,7 @@ Manual configuration stays in `platform/upload-broker/wrangler.jsonc` for bucket
    unset BREAZIN_UPLOAD_BROKER_TOKEN BREAZIN_UPLOAD_BROKER_DEVICE_ID
    ```
 
-The harness creates a unique tiny PNG object, validates authenticated upload and download bytes, refreshes the GET URL, deletes the object in `finally`, and verifies refresh returns `404` after deletion. Handle expiry is deterministic in local tests. A real-time expiry exercise should use an isolated short-TTL staging deployment or wait for the configured interval; do not weaken production TTLs.
+The harness creates a unique tiny PNG object, validates authenticated upload and download bytes, refreshes the GET URL, deletes the object in `finally`, and verifies refresh returns `404` after deletion. It passed against the deployed staging Worker on 2026-07-28 using the Beta Keychain credential. Handle expiry is deterministic in local tests. A real-time expiry exercise should use an isolated short-TTL staging deployment or wait for the configured interval; do not weaken production TTLs.
 
 ## Operator acceptance: Seedream and Seedance
 
