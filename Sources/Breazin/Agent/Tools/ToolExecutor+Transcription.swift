@@ -162,29 +162,39 @@ extension ToolExecutor {
     func transcriptionContext(
         _ args: [String: Any],
         path: String,
-        preferLast: Bool = false,
-        estimatedCloudCost: () async -> Int
+        preferLast: Bool = false
     ) async throws -> TranscriptionToolContext {
         if preferLast, let lastTranscriptContext {
             return lastTranscriptContext
         }
-        let account = AccountService.shared
-        let cost = await estimatedCloudCost()
         let provider: TranscriptionMode = Self.canUseCloudTranscription(
-            isSignedIn: account.isSignedIn,
-            remainingCredits: account.remainingCredits,
-            estimatedCost: cost
+            isConfigured: TranscriptionProviderCatalog.isCloudConfigured
         ) ? .cloud : .local
+        let preferredLocale: Locale?
+        if provider == .cloud {
+            preferredLocale = try Self.parseCloudLocale(args, path: path)
+        } else {
+            preferredLocale = try await Self.parseLocale(args, path: path)
+        }
         return TranscriptionToolContext(
             provider: provider,
-            preferredLocale: provider == .cloud ? nil : try await Self.parseLocale(args, path: path)
+            preferredLocale: preferredLocale
         )
     }
 
-    static func canUseCloudTranscription(isSignedIn: Bool, remainingCredits: Int, estimatedCost: Int) -> Bool {
-        guard isSignedIn else { return false }
-        guard estimatedCost > 0 else { return true }
-        return remainingCredits >= estimatedCost
+    static func canUseCloudTranscription(isConfigured: Bool) -> Bool {
+        isConfigured
+    }
+
+    static func parseCloudLocale(_ args: [String: Any], path: String) throws -> Locale? {
+        guard let raw = args.string("language") else { return nil }
+        let locale = Locale(identifier: raw)
+        guard let code = locale.language.languageCode?.identifier,
+              code.range(of: #"^[A-Za-z]{2}$"#, options: .regularExpression) != nil
+        else {
+            throw ToolError("\(path): cloud transcription language must be an ISO-639-1 code, such as 'en' or 'zh'.")
+        }
+        return Locale(identifier: code.lowercased())
     }
 
     static func parseLocale(_ args: [String: Any], path: String) async throws -> Locale? {
@@ -196,16 +206,10 @@ extension ToolExecutor {
         return match
     }
 
-    static func validateCloudTranscriptionAccess(for request: EditorViewModel.CaptionRequest, in editor: EditorViewModel) async throws {
+    static func validateCloudTranscriptionAccess(for request: EditorViewModel.CaptionRequest) throws {
         guard request.provider == .cloud else { return }
-        let cost = await editor.captionCloudCreditCost(for: request)
-        let account = AccountService.shared
-        guard account.isSignedIn else { throw ToolError("Sign in to use Cloud transcription.") }
-        guard cost > 0 else { return }
-        let remaining = account.remainingCredits
-        guard remaining > 0 else { throw ToolError("Add credits to use Cloud transcription.") }
-        if cost > remaining {
-            throw ToolError("\(CostEstimator.format(cost)) needed. Only \(remaining.formatted()) remaining.")
+        guard TranscriptionProviderCatalog.isCloudConfigured else {
+            throw ToolError("Add the OpenAI transcription API key in Settings > Providers.")
         }
     }
 
@@ -224,9 +228,7 @@ extension ToolExecutor {
             throw ToolError("granularity must be 'words' or 'segments' (got '\(granularity)')")
         }
 
-        let context = try await transcriptionContext(args, path: "get_transcript") {
-            await editor.captionCloudCreditCost(for: .init(autoDetect: true, provider: .cloud))
-        }
+        let context = try await transcriptionContext(args, path: "get_transcript")
         let transcript = try await timelineTranscript(editor, context: context)
         lastTranscriptContext = context
 
@@ -245,7 +247,7 @@ extension ToolExecutor {
     func timelineTranscript(_ editor: EditorViewModel, context: TranscriptionToolContext) async throws -> TimelineTranscript {
         if context.provider == .cloud {
             let request = EditorViewModel.CaptionRequest(autoDetect: true, provider: .cloud)
-            try await Self.validateCloudTranscriptionAccess(for: request, in: editor)
+            try Self.validateCloudTranscriptionAccess(for: request)
         }
         let (words, skipped) = try await timelineWords(editor, context: context)
         return TimelineTranscript(context: context, words: words, skipped: skipped)
@@ -276,7 +278,6 @@ extension ToolExecutor {
         let transcripts = await transcriptsByURL(
             for: fragments,
             fps: fps,
-            projectId: editor.projectId,
             context: context,
             isVideoByURL: isVideoByURL
         )
@@ -359,7 +360,6 @@ extension ToolExecutor {
     private func transcriptsByURL(
         for fragments: [TranscriptFragment],
         fps: Int,
-        projectId: String?,
         context: TranscriptionToolContext,
         isVideoByURL: [URL: Bool]
     ) async -> (results: [URL: TranscriptionResult], skipped: [[String: Any]]) {
@@ -380,8 +380,7 @@ extension ToolExecutor {
                             return (url, .success(try await CloudTranscription.transcribe(
                                 fileURL: url,
                                 range: rangesByURL[url],
-                                preferredLocale: nil,
-                                projectId: projectId
+                                preferredLocale: context.preferredLocale
                             )))
                         }
                     } catch {

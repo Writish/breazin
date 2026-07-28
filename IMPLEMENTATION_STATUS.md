@@ -16,6 +16,13 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - Seedream uses the current `doubao-seedream-5-0-pro-260628` model identifier and its documented 1K/2K resolution contract. Seedance retains the current asynchronous task submit/query contract and reference media roles.
 - Repository operations: nested `AGENTS.md`, Codex prompts, security/architecture/development/runbook documentation, branding checks, dependency review, and bundle verification are implemented.
 
+## Phase 3 in progress
+
+- `ModelCatalog` no longer subscribes to Convex. The app-owned provider catalog is populated synchronously from implemented adapters, is available before account/network initialization, and currently exposes only Seedream 5.0 Pro and Seedance 2.0.
+- Cloud transcription no longer stages audio through Palmier storage or submits a Palmier transcription Job. Breazin extracts a local 16 kHz mono WAV, uploads it directly to OpenAI's `audio/transcriptions` endpoint with `whisper-1` verbose word/segment timestamps, maps the result back to source/timeline time, and caches it under a provider-versioned key.
+- OpenAI transcription is an independent BYOK Keychain credential (`openai-transcription`), not the planned GPT Image 2 OAuth credential. Settings and caption/speaker UX state that provider usage is billed externally; missing configuration falls back to Apple's local transcription for Agent tools.
+- The retired `TranscriptionBackend` implementation has been deleted. The broader Clerk/Convex/credits/Palmier generation and account cleanup remains the next Phase 3 slice and is not represented as complete.
+
 ## Verification boundary
 
 - Automated local contracts cover generation crash recovery, duplicate recovery, unopened projects, ambiguous submission, download staging, cancellation/completion races, reference standardization, upload/refresh/delete binding, Volcengine request mapping, Broker health/authentication/presigning/object verification/complete/refresh/delete, expired or tampered handles, and lifecycle configuration.
@@ -23,7 +30,8 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - A Beta Seedance run on 2026-07-23 verified authenticated reserve/presigned `PUT`/complete, provider submit/poll, generated-output finalization, and bound-upload delete once. The standalone staging harness, explicit object-byte read, refresh, and real-time expiry are still not claimed; the local acceptance-only Worker revision remains undeployed.
 - Paid Beta generation now includes one successful Seedream 5.0 Pro image run and two successful Seedance 2.0 image-reference video runs. The successful Seedream row recorded one attempt, one result, 4,450 Tokens, terminal `succeeded`, and deleted reference-upload state.
 - The 2026-07-28 Seedance restart drill exited with an accepted remote Job, relaunched 31 seconds later, and completed with the same provider task ID, one attempt, one result, 108,900 total Tokens, project media installation, and deleted upload state. This verifies no-resubmit restart recovery. Because the project was opened before the local terminal write, unopened-project output staging remains verified by deterministic tests rather than a separate live observation.
-- Strict Phase 2 is closed in source and deterministic acceptance. The final retry follow-up passed 150 selected tests across 9 suites, an additional focused 28-test run during output-URL retry hardening, and the complete 1,192-test regression across 183 suites.
+- Strict Phase 2 is closed in source and deterministic acceptance. The final retry follow-up passed 150 selected tests across 9 suites, an additional focused 28-test run during output-URL retry hardening, and—after rebasing onto the latest upstream main—the complete 1,206-test regression across 184 suites.
+- Phase 3 adapter contracts currently include a 32-test focused run covering the local provider catalog, OpenAI multipart/auth/timestamp/error behavior, provider configuration fallback, cloud-language validation, and transcript cache behavior. No paid OpenAI transcription call has been made or claimed; live BYOK acceptance remains manual.
 
 See `docs/development/phase-2-acceptance.md` for the evidence matrix and operator steps.
 

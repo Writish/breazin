@@ -28,9 +28,7 @@ extension ToolExecutor {
             maxWords = n
         }
 
-        let context = try await transcriptionContext(args, path: "add_captions") {
-            await editor.captionCloudCreditCost(for: .init(autoDetect: true, provider: .cloud))
-        }
+        let context = try await transcriptionContext(args, path: "add_captions")
         let provider = context.provider
         if provider == .cloud {
             if args.bool("censorProfanity") == true {
@@ -51,7 +49,7 @@ extension ToolExecutor {
             animation: animation
         )
 
-        try await Self.validateCloudTranscriptionAccess(for: request, in: editor)
+        try Self.validateCloudTranscriptionAccess(for: request)
 
         let snapshot = timelineSnapshot(editor)
         let ids = try await editor.generateCaptions(for: request, applying: { mutation in

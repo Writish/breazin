@@ -31,7 +31,10 @@ enum ProviderModelCatalog {
         return VolcengineGenerationProvider(apiKey: key)
     }
 
-    static let localEntries: [CatalogEntry] = [
+    /// Product-owned catalog assembled from implemented provider adapters.
+    /// It is available before account or network initialization and never falls
+    /// back to the legacy Convex `models:list` subscription.
+    static let catalogEntries: [CatalogEntry] = [
         CatalogEntry(
             id: seedream5Pro,
             kind: .image,

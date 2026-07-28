@@ -60,18 +60,26 @@ actor TranscriptCache {
     func cachedCloudTranscript(
         for url: URL,
         range: ClosedRange<Double>?,
-        language: String?
+        language: String?,
+        providerID: ProviderID
     ) -> TranscriptionResult? {
-        guard let key = Self.key(for: url, variant: .cloud(range: range, language: language)) else { return nil }
+        guard let key = Self.key(
+            for: url,
+            variant: .cloud(providerID: providerID, range: range, language: language)
+        ) else { return nil }
         return cached(key)
     }
 
     func hasCachedCloudTranscript(
         for url: URL,
         range: ClosedRange<Double>?,
-        language: String?
+        language: String?,
+        providerID: ProviderID
     ) -> Bool {
-        guard let key = Self.key(for: url, variant: .cloud(range: range, language: language)) else { return false }
+        guard let key = Self.key(
+            for: url,
+            variant: .cloud(providerID: providerID, range: range, language: language)
+        ) else { return false }
         return memory[key] != nil || FileManager.default.fileExists(atPath: Self.diskURL(key).path)
     }
 
@@ -79,9 +87,13 @@ actor TranscriptCache {
         _ result: TranscriptionResult,
         for url: URL,
         range: ClosedRange<Double>?,
-        language: String?
+        language: String?,
+        providerID: ProviderID
     ) {
-        guard let key = Self.key(for: url, variant: .cloud(range: range, language: language)) else { return }
+        guard let key = Self.key(
+            for: url,
+            variant: .cloud(providerID: providerID, range: range, language: language)
+        ) else { return }
         store(result, key: key)
     }
 
@@ -124,16 +136,22 @@ actor TranscriptCache {
 
     private enum CacheVariant {
         case local
-        case cloud(range: ClosedRange<Double>?, language: String?)
+        case cloud(providerID: ProviderID, range: ClosedRange<Double>?, language: String?)
 
         var prefix: String? {
             switch self {
             case .local:
                 return nil
-            case .cloud(let range, let language):
+            case .cloud(let providerID, let range, let language):
                 let lang = language ?? "auto"
-                guard let range else { return "cloud|\(lang)|full" }
-                return String(format: "cloud|%@|%.3f...%.3f", lang, range.lowerBound, range.upperBound)
+                let namespace = "cloud-v2|\(providerID.rawValue)|\(lang)"
+                guard let range else { return "\(namespace)|full" }
+                return String(
+                    format: "%@|%.3f...%.3f",
+                    namespace,
+                    range.lowerBound,
+                    range.upperBound
+                )
             }
         }
     }

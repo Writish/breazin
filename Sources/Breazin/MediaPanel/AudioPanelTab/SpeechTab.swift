@@ -40,7 +40,7 @@ struct SpeechTab: View {
                 Button(editor.projectSpeakers.isEmpty ? "Identify Speakers" : "Refresh") { editor.identifySpeakers(transcribeMissing: true) }
                     .controlSize(.small)
                     .disabled(editor.speakerIdentifyInFlight)
-                    .help("Matches voices across clips, transcribing untranscribed timeline clips first (uses credits). Transcripts and voice fingerprints are cached, so re-runs are fast.")
+                    .help("Matches voices across clips, transcribing missing clips with the configured OpenAI transcription provider. Usage is billed by OpenAI; transcripts and voice fingerprints are cached.")
             }
             if let error = editor.speakerIdentifyError {
                 Text(error)

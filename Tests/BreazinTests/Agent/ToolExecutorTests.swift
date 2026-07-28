@@ -719,8 +719,7 @@ struct ToolExecutorReadOnlyTests {
 
     // MARK: - list_models
 
-    /// ModelCatalog populates from Convex over the network — empty in tests. These verify
-    /// shape and filter contract regardless of whether the catalog has any entries.
+    /// The product-owned provider catalog is available without an account or network.
 
     @Test func listModelsReturnsWrappedShape() async throws {
         let h = ToolHarness()
@@ -729,12 +728,13 @@ struct ToolExecutorReadOnlyTests {
         #expect(body?["loaded"] is Bool)
     }
 
-    @Test func listModelsReportsCatalogNotLoadedInTestEnvironment() async throws {
-        // No Convex connection → catalog stays unloaded. Agents must use this to disambiguate
-        // empty results from "catalog not synced yet".
+    @Test func listModelsReportsProviderCatalogLoadedWithoutBackend() async throws {
         let h = ToolHarness()
         let body = try await h.runOK("list_models") as? [String: Any]
-        #expect(body?["loaded"] as? Bool == false)
+        #expect(body?["loaded"] as? Bool == true)
+        let models = body?["models"] as? [[String: Any]]
+        #expect(models?.contains { $0["id"] as? String == ProviderModelCatalog.seedream5Pro } == true)
+        #expect(models?.contains { $0["id"] as? String == ProviderModelCatalog.seedance2 } == true)
     }
 
     @Test func listModelsFilterIsRespectedForAllEntries() async throws {

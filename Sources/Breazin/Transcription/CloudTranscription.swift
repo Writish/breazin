@@ -1,22 +1,22 @@
-import AVFoundation
 import Foundation
 
 enum CloudTranscription {
     static func transcribe(
         fileURL: URL,
         range: ClosedRange<Double>?,
-        preferredLocale: Locale?,
-        projectId: String?
+        preferredLocale: Locale?
     ) async throws -> TranscriptionResult {
         let language = languageIdentifier(preferredLocale)
         if let cached = await TranscriptCache.shared.cachedCloudTranscript(
             for: fileURL,
             range: range,
-            language: language
+            language: language,
+            providerID: TranscriptionProviderCatalog.openAI
         ) {
             return cached
         }
 
+        let provider = try TranscriptionProviderCatalog.makeCloudProvider()
         let tempAudioURL = try await Transcription.extractAudioTrack(
             from: fileURL,
             range: range,
@@ -24,21 +24,18 @@ enum CloudTranscription {
         )
         defer { try? FileManager.default.removeItem(at: tempAudioURL) }
 
-        let durationSeconds = try await transcriptionDuration(for: tempAudioURL, sourceRange: range)
-        let storageId = try await BackendStorage.uploadStaged(fileURL: tempAudioURL, contentType: "audio/wav")
-        let submitted = try await TranscriptionBackend.submit(
-            storageId: storageId,
-            durationSeconds: durationSeconds,
-            language: language,
-            projectId: projectId
-        )
-        let result = try await TranscriptionBackend.waitForResult(jobId: submitted.jobId)
+        let result = try await provider.transcribe(ProviderTranscriptionRequest(
+            fileURL: tempAudioURL,
+            preferredLocaleIdentifier: language,
+            censorProfanity: false
+        ))
             .offsetting(by: range?.lowerBound ?? 0)
         await TranscriptCache.shared.storeCloudTranscript(
             result,
             for: fileURL,
             range: range,
-            language: language
+            language: language,
+            providerID: provider.id
         )
         return result
     }
@@ -49,15 +46,4 @@ enum CloudTranscription {
         }
     }
 
-    private static func transcriptionDuration(
-        for audioURL: URL,
-        sourceRange: ClosedRange<Double>?
-    ) async throws -> Double {
-        if let sourceRange {
-            return max(0.01, sourceRange.upperBound - sourceRange.lowerBound)
-        }
-        let asset = AVURLAsset(url: audioURL)
-        let duration = try await asset.load(.duration).seconds
-        return max(0.01, duration.isFinite ? duration : 0.01)
-    }
 }

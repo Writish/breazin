@@ -32,6 +32,7 @@ enum ProviderCredentialStore {
 
     static func preloadForLaunch() {
         _ = loadAPIKey(for: ProviderModelCatalog.volcengineArk)
+        _ = loadAPIKey(for: TranscriptionProviderCatalog.openAI)
         _ = loadUploadBrokerToken()
     }
 }

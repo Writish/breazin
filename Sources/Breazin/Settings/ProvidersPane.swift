@@ -5,10 +5,14 @@ struct ProvidersPane: View {
     @State private var hasVolcengineKey = false
     @State private var maskedKey = ""
     @State private var draft = ""
+    @State private var hasTranscriptionKey = false
+    @State private var maskedTranscriptionKey = ""
+    @State private var transcriptionDraft = ""
     @State private var hasBrokerToken = false
     @State private var maskedBrokerToken = ""
     @State private var brokerDraft = ""
     @FocusState private var keyFocused: Bool
+    @FocusState private var transcriptionKeyFocused: Bool
     @FocusState private var brokerTokenFocused: Bool
 
     private let volcengineConsole = URL(string: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey")!
@@ -19,7 +23,8 @@ struct ProvidersPane: View {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                     providerHeader(
                         title: "Volcengine Ark",
-                        detail: "Doubao Seedream 5.0 Pro and Doubao Seedance 2.0. Usage is billed directly by Volcengine."
+                        detail: "Doubao Seedream 5.0 Pro and Doubao Seedance 2.0. Usage is billed directly by Volcengine.",
+                        isConnected: hasVolcengineKey
                     )
                     HStack(spacing: AppTheme.Spacing.sm) {
                         SecureField(hasVolcengineKey ? maskedKey : "Paste Volcengine API key", text: $draft)
@@ -61,6 +66,50 @@ struct ProvidersPane: View {
                     .pointerStyle(.link)
 
                     Text("The key is stored in the macOS Keychain and is sent only to ark.cn-beijing.volces.com.")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+
+                    Divider().overlay(AppTheme.Border.subtleColor)
+
+                    providerHeader(
+                        title: "OpenAI transcription",
+                        detail: "Cloud captions use whisper-1 with word timestamps. Usage is billed directly by OpenAI.",
+                        isConnected: hasTranscriptionKey
+                    )
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        SecureField(
+                            hasTranscriptionKey ? maskedTranscriptionKey : "Paste OpenAI API key",
+                            text: $transcriptionDraft
+                        )
+                        .textFieldStyle(.plain)
+                        .focused($transcriptionKeyFocused)
+                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .padding(.horizontal, AppTheme.Spacing.md)
+                        .padding(.vertical, AppTheme.Spacing.smMd)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .fill(Color.black.opacity(AppTheme.Opacity.muted))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
+                        )
+                        .onSubmit(saveTranscriptionKey)
+
+                        if !transcriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Save", action: saveTranscriptionKey)
+                                .buttonStyle(.capsule(.prominent, size: .regular))
+                        } else if hasTranscriptionKey {
+                            Button(action: removeTranscriptionKey) {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                            }
+                            .buttonStyle(.capsule(.secondary, size: .regular))
+                            .help("Remove API key")
+                        }
+                    }
+
+                    Text("The key is stored in the macOS Keychain. Extracted WAV audio is sent directly to api.openai.com; it does not pass through the Breazin upload Broker.")
                         .font(.system(size: AppTheme.FontSize.sm))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
@@ -136,7 +185,7 @@ struct ProvidersPane: View {
         .onAppear(perform: refresh)
     }
 
-    private func providerHeader(title: String, detail: String) -> some View {
+    private func providerHeader(title: String, detail: String, isConnected: Bool) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(title)
@@ -147,9 +196,9 @@ struct ProvidersPane: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             Spacer()
-            Text(hasVolcengineKey ? "Connected" : "API key required")
+            Text(isConnected ? "Connected" : "API key required")
                 .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(hasVolcengineKey ? AppTheme.Status.successColor : AppTheme.Text.tertiaryColor)
+                .foregroundStyle(isConnected ? AppTheme.Status.successColor : AppTheme.Text.tertiaryColor)
         }
     }
 
@@ -179,11 +228,13 @@ struct ProvidersPane: View {
             let credentials = await Task.detached(priority: .utility) {
                 (
                     ProviderCredentialStore.loadAPIKey(for: ProviderModelCatalog.volcengineArk) ?? "",
+                    ProviderCredentialStore.loadAPIKey(for: TranscriptionProviderCatalog.openAI) ?? "",
                     ProviderCredentialStore.loadUploadBrokerToken() ?? ""
                 )
             }.value
             apply(credentials.0)
-            applyBrokerToken(credentials.1)
+            applyTranscriptionKey(credentials.1)
+            applyBrokerToken(credentials.2)
         }
     }
 
@@ -213,6 +264,34 @@ struct ProvidersPane: View {
     private func apply(_ key: String) {
         hasVolcengineKey = !key.isEmpty
         maskedKey = key.isEmpty ? "" : String(repeating: "•", count: 32) + key.suffix(4)
+    }
+
+    private func saveTranscriptionKey() {
+        let key = transcriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        transcriptionDraft = ""
+        transcriptionKeyFocused = false
+        Task { @MainActor in
+            await Task.detached(priority: .userInitiated) {
+                ProviderCredentialStore.saveAPIKey(key, for: TranscriptionProviderCatalog.openAI)
+            }.value
+            applyTranscriptionKey(key)
+        }
+    }
+
+    private func removeTranscriptionKey() {
+        transcriptionDraft = ""
+        Task { @MainActor in
+            await Task.detached(priority: .userInitiated) {
+                ProviderCredentialStore.deleteAPIKey(for: TranscriptionProviderCatalog.openAI)
+            }.value
+            applyTranscriptionKey("")
+        }
+    }
+
+    private func applyTranscriptionKey(_ key: String) {
+        hasTranscriptionKey = !key.isEmpty
+        maskedTranscriptionKey = key.isEmpty ? "" : String(repeating: "•", count: 32) + key.suffix(4)
     }
 
     private func saveBrokerToken() {

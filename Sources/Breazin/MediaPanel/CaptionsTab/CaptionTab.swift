@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CaptionTab: View {
     @Environment(EditorViewModel.self) var editor
-    @Bindable private var account = AccountService.shared
 
     @State private var style: TextStyle = CaptionTab.defaultStyle
     @State private var center = AppTheme.Caption.defaultCenter
@@ -22,7 +21,6 @@ struct CaptionTab: View {
     @State private var locale: Locale?
     @State private var supportedLocales: [Locale] = []
     @State private var isGenerating = false
-    @State private var estimatedCloudCost: Int?
     @State private var note: String?
     @State private var sourceExpanded = true
     @State private var settingsExpanded = true
@@ -54,28 +52,16 @@ struct CaptionTab: View {
     private var captionTrackIndices: [Int] {
         editor.timeline.tracks.indices.filter { !editor.captionTargets(trackIds: [editor.timeline.tracks[$0].id]).isEmpty }
     }
-    private var remainingCloudCredits: Int? {
-        account.budgetCredits == nil ? nil : account.remainingCredits
-    }
     private var cloudModeUnavailableMessage: String? {
         guard provider == .cloud else { return nil }
-        guard account.isSignedIn else { return "Sign in to use Cloud." }
+        guard TranscriptionProviderCatalog.isCloudConfigured else {
+            return "OpenAI API key required"
+        }
         return nil
     }
     private var canGenerateCaptions: Bool {
         effectiveCount > 0 && !isGenerating && cloudModeUnavailableMessage == nil
     }
-    private var costEstimateKey: String {
-        "\(provider.rawValue)|\(sourceClipIds.joined(separator: ","))|\(isAutoSource)|\(locale?.identifier ?? "")"
-    }
-    private var costHelpText: String {
-        guard let cost = estimatedCloudCost else { return "Estimated cost. Actual billing may differ slightly." }
-        guard cost > 0 else { return "Cached — no credits used." }
-        guard let remaining = remainingCloudCredits else { return "\(CostEstimator.format(cost)) estimated. Actual billing may differ." }
-        if cost > remaining { return "\(CostEstimator.format(cost)) needed. Only \(remaining.formatted()) remaining." }
-        return "\(CostEstimator.format(cost)). \((remaining - cost).formatted()) remaining after this generation."
-    }
-
     private static let translateLanguages = [
         "Spanish", "French", "German", "Italian", "Portuguese",
         "Japanese", "Korean", "Chinese", "Hindi", "Arabic"
@@ -117,16 +103,6 @@ struct CaptionTab: View {
         }
         .onAppear { rememberSelectedClipTargets() }
         .onChange(of: editor.selectedClipIds) { _, _ in rememberSelectedClipTargets() }
-        .task(id: costEstimateKey) {
-            estimatedCloudCost = nil
-            guard provider == .cloud, effectiveCount > 0 else { return }
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            let request = EditorViewModel.CaptionRequest(sourceClipIds: sourceClipIds, autoDetect: isAutoSource, locale: locale, provider: .cloud)
-            let cost = await editor.captionCloudCreditCost(for: request)
-            guard !Task.isCancelled else { return }
-            estimatedCloudCost = cost
-        }
     }
 
     private var sourceSection: some View {
@@ -141,7 +117,7 @@ struct CaptionTab: View {
             ) { sourceMenu }
             InspectorRow(
                 label: "Mode",
-                labelHelp: "Local runs with Apple's SpeechAnalyzer. Cloud uses credits and a more accurate model with more capabilities.",
+                labelHelp: "Local runs with Apple's SpeechAnalyzer. Cloud sends extracted audio directly to the configured OpenAI transcription API and is billed by OpenAI.",
                 onReset: { provider = .cloud }
             ) { providerPicker }
         }
@@ -232,8 +208,8 @@ struct CaptionTab: View {
         .fixedSize()
     }
 
-    private var cloudCreditHelp: String {
-        "Cloud auto-detects languages, produces more accurate transcripts, can identify speakers, and uses 25 credits/hr when a transcript is not cached."
+    private var cloudProviderHelp: String {
+        "Cloud uses the configured OpenAI transcription API, supports word timestamps and speaker workflows, and is billed directly by OpenAI. Cached transcripts do not make another request."
     }
 
     private func providerOption(_ option: TranscriptionMode, title: String) -> some View {
@@ -252,7 +228,7 @@ struct CaptionTab: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .help(option == .cloud ? cloudCreditHelp : "Local runs with Apple's SpeechAnalyzer.")
+        .help(option == .cloud ? cloudProviderHelp : "Local runs with Apple's SpeechAnalyzer.")
     }
 
     private func rememberSelectedClipTargets() {
@@ -416,10 +392,6 @@ struct CaptionTab: View {
                 Button(action: generate) {
                     HStack(spacing: AppTheme.Spacing.xs) {
                         Text(cloudModeUnavailableMessage ?? "Generate Captions")
-                        if cloudModeUnavailableMessage == nil, provider == .cloud, let cost = estimatedCloudCost {
-                            Image(systemName: "dollarsign.circle.fill").font(.system(size: AppTheme.FontSize.xs))
-                            Text("\(cost)").monospacedDigit()
-                        }
                     }
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
@@ -427,7 +399,7 @@ struct CaptionTab: View {
                 .buttonStyle(.editorPrimary)
                 .focusable(false)
                 .disabled(!canGenerateCaptions)
-                .help(provider == .cloud ? costHelpText : "")
+                .help(provider == .cloud ? "Usage is billed directly by OpenAI. Cached transcripts do not make another request." : "")
 
                 agentMenu
             }
@@ -456,16 +428,9 @@ struct CaptionTab: View {
             isGenerating = true
             defer { isGenerating = false }
             do {
-                if request.provider == .cloud {
-                    if let message = cloudUnavailableMessage(cost: nil, provider: request.provider) {
-                        note = message
-                        return
-                    }
-                    let cost = await editor.captionCloudCreditCost(for: request)
-                    if let message = cloudUnavailableMessage(cost: cost, provider: request.provider) {
-                        note = message
-                        return
-                    }
+                if let message = cloudUnavailableMessage(provider: request.provider) {
+                    note = message
+                    return
                 }
                 if try await editor.generateCaptions(for: request).isEmpty { note = "No speech detected." }
             } catch {
@@ -474,16 +439,10 @@ struct CaptionTab: View {
         }
     }
 
-    private func cloudUnavailableMessage(cost: Int?, provider mode: TranscriptionMode? = nil) -> String? {
+    private func cloudUnavailableMessage(provider mode: TranscriptionMode? = nil) -> String? {
         guard (mode ?? provider) == .cloud else { return nil }
-        guard account.isSignedIn else { return "Sign in to use Cloud." }
-        guard let cost else { return nil }
-        guard cost > 0 else { return nil }
-        guard let remaining = remainingCloudCredits else { return nil }
-        guard remaining > 0 else { return "Add credits to use Cloud." }
-        if cost > remaining {
-            return "\(CostEstimator.format(cost)) needed. Only \(remaining.formatted()) remaining."
-        }
-        return nil
+        return TranscriptionProviderCatalog.isCloudConfigured
+            ? nil
+            : "Add the OpenAI transcription API key in Settings > Providers."
     }
 }

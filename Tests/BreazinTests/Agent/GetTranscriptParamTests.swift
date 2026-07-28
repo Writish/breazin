@@ -37,11 +37,16 @@ struct GetTranscriptParamTests {
         #expect(json?["words"] == nil)
     }
 
-    @Test func cloudTranscriptionRequiresCoveredUncachedCost() {
-        #expect(ToolExecutor.canUseCloudTranscription(isSignedIn: true, remainingCredits: 5, estimatedCost: 6) == false)
-        #expect(ToolExecutor.canUseCloudTranscription(isSignedIn: true, remainingCredits: 6, estimatedCost: 6) == true)
-        #expect(ToolExecutor.canUseCloudTranscription(isSignedIn: true, remainingCredits: 0, estimatedCost: 0) == true)
-        #expect(ToolExecutor.canUseCloudTranscription(isSignedIn: false, remainingCredits: 100, estimatedCost: 1) == false)
+    @Test func cloudTranscriptionRequiresConfiguredProvider() {
+        #expect(ToolExecutor.canUseCloudTranscription(isConfigured: false) == false)
+        #expect(ToolExecutor.canUseCloudTranscription(isConfigured: true) == true)
+    }
+
+    @Test func cloudLanguageRequiresISO639Code() throws {
+        #expect(try ToolExecutor.parseCloudLocale(["language": "zh-CN"], path: "get_transcript")?.language.languageCode?.identifier == "zh")
+        #expect(throws: ToolError.self) {
+            _ = try ToolExecutor.parseCloudLocale(["language": "not-a-language"], path: "get_transcript")
+        }
     }
 
     @Test func wordRowsSpeakerRunsAndSegments() async throws {

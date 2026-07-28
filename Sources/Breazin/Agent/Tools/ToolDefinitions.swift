@@ -667,14 +667,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getTranscript,
-            description: "Returns the spoken transcript of the CURRENT timeline in project frames — the post-edit caption track in one call. Unlike inspect_media (which transcribes one source asset in isolation, in source seconds), this walks every audio/video clip on the timeline, maps each word through that clip's trim/speed/position, and concatenates in timeline order. Deleted ranges are gone by construction, so after cuts this always reflects what's actually audible — no stale results, no per-clip frame math. The app chooses cloud only when the signed-in account has enough credits for the uncached request; otherwise it uses local transcription and reports the resolved transcriptionSource in the response.\n\nReturns clips in timeline order, each with its words as compact [index, text, startFrame] rows (a word runs to the next word's start; the last word to its clip's end). Speakers, when identified, arrive as run-length turns: speakers = [[firstWordIndex, name], ...]. The index is a stable, global, 0-based position in timeline order; pass it straight to remove_words to cut that word (the intuitive path for text-based editing). Indices stay global even when scoped with clipId or paged with a window. Capped at 10000 words; page with startFrame/endFrame using nextStartFrame.\n\nFor comprehension rather than cutting — summarizing, finding a topic, take selection on long media — pass granularity='segments': sentence rows [firstWordIndex, text, start, end] at a fraction of the tokens, whose firstWordIndex jumps you back into word mode for the cut window.\n\nUse for transcript-driven edits (filler-word / dead-air removal, locating a quote, take selection) and to verify what remains after cutting. To cut, prefer remove_words (give it the indices); drop to ripple_delete_ranges only for non-word-aligned spans.",
+            description: "Returns the spoken transcript of the CURRENT timeline in project frames — the post-edit caption track in one call. Unlike inspect_media (which transcribes one source asset in isolation, in source seconds), this walks every audio/video clip on the timeline, maps each word through that clip's trim/speed/position, and concatenates in timeline order. Deleted ranges are gone by construction, so after cuts this always reflects what's actually audible — no stale results, no per-clip frame math. The app uses the configured OpenAI transcription provider when its API key is present; otherwise it falls back to local Apple transcription and reports the resolved transcriptionSource in the response.\n\nReturns clips in timeline order, each with its words as compact [index, text, startFrame] rows (a word runs to the next word's start; the last word to its clip's end). Speakers, when identified, arrive as run-length turns: speakers = [[firstWordIndex, name], ...]. The index is a stable, global, 0-based position in timeline order; pass it straight to remove_words to cut that word (the intuitive path for text-based editing). Indices stay global even when scoped with clipId or paged with a window. Capped at 10000 words; page with startFrame/endFrame using nextStartFrame.\n\nFor comprehension rather than cutting — summarizing, finding a topic, take selection on long media — pass granularity='segments': sentence rows [firstWordIndex, text, start, end] at a fraction of the tokens, whose firstWordIndex jumps you back into word mode for the cut window.\n\nUse for transcript-driven edits (filler-word / dead-air removal, locating a quote, take selection) and to verify what remains after cutting. To cut, prefer remove_words (give it the indices); drop to ripple_delete_ranges only for non-word-aligned spans.",
             inputSchema: objectSchema(
                 properties: [
                     "startFrame": ["type": "integer", "description": "Optional. Only return words ending after this project frame. Use with the returned nextStartFrame to page a long timeline."],
                     "endFrame": ["type": "integer", "description": "Optional. Only return words starting before this project frame."],
                     "clipId": ["type": "string", "description": "Scope the transcript to a single clip — returns only what that clip says, in project frames. Answers \"what's in clip X?\" without scanning the whole timeline."],
                     "granularity": ["type": "string", "enum": ["words", "segments"], "description": "words (default) for cutting with remove_words; segments for cheap sentence-level reading — rows carry firstWordIndex to drill back into words."],
-                    "language": ["type": "string", "description": "Optional BCP-47 speech language. Applies to local only; cloud auto-detects."],
+                    "language": ["type": "string", "description": "Optional speech language. Cloud accepts an ISO-639-1 code such as en or zh; local accepts a supported BCP-47 locale. Omit for auto-detection."],
                 ]
             )
         ),
@@ -779,10 +779,10 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .addCaptions,
-            description: "Transcribes the timeline's spoken audio and creates styled caption text clips on their own track — no targeting needed; it finds the spoken content itself. The app uses cloud only when the signed-in account has enough credits for the uncached request; otherwise it uses local transcription. Cloud auto-detects language. Per-word animations are timed from the transcript. Returns the caption group summary (captionGroupId, clipCount, frameRange, shared style, textPreview) — restyle it later with update_text and that captionGroupId.",
+            description: "Transcribes the timeline's spoken audio and creates styled caption text clips on their own track — no targeting needed; it finds the spoken content itself. The app uses the configured OpenAI transcription provider when its API key is present; otherwise it falls back to local Apple transcription. Provider usage is billed externally. Per-word animations are timed from the transcript. Returns the caption group summary (captionGroupId, clipCount, frameRange, shared style, textPreview) — restyle it later with update_text and that captionGroupId.",
             inputSchema: objectSchema(
                 properties: mergedProperties([
-                    "language": ["type": "string", "description": "BCP-47 speech language. Applies to local only; cloud auto-detects."],
+                    "language": ["type": "string", "description": "Optional speech language. Cloud accepts an ISO-639-1 code such as en or zh; local accepts a supported BCP-47 locale."],
                     "transform": [
                         "type": "object",
                         "description": "Caption box position; size is auto-fit per caption.",
@@ -791,7 +791,7 @@ enum ToolDefinitions {
                             "centerY": ["type": "number", "description": "0-1 vertical center."],
                         ],
                     ],
-                    "censorProfanity": ["type": "boolean", "description": "Mask profanity."],
+                    "censorProfanity": ["type": "boolean", "description": "Mask profanity with local transcription only."],
                     "maxWords": ["type": "integer", "description": "Max words per caption."],
                 ], textStyleProperties(detailed: false), [
                     "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Caption animation preset."],

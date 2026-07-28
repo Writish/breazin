@@ -141,34 +141,6 @@ extension EditorViewModel {
         return placeCaptionTrack(specs)
     }
 
-    // Estimate the cost of cloud transcription given the request. 0 if hit cache.
-    func captionCloudCreditCost(for request: CaptionRequest) async -> Int {
-        guard request.provider == .cloud else { return 0 }
-        let targets = resolvedCaptionTargets(for: request)
-        guard !targets.isEmpty else { return 0 }
-        let targetClips = targets.map(\.clip)
-        let language = CloudTranscription.languageIdentifier(request.locale)
-        var seen: Set<String> = []
-        var totalCost = 0
-        for t in targets where seen.insert(t.clip.mediaRef).inserted {
-            guard let url = mediaResolver.resolveURL(for: t.clip.mediaRef) else { continue }
-            let range = CaptionTranscriptMapper.sourceUnion(for: t.clip.mediaRef, clips: targetClips, fps: timeline.fps)
-            if await TranscriptCache.shared.hasCachedCloudTranscript(for: url, range: range, language: language) {
-                continue
-            }
-            let seconds: Double
-            if let range {
-                seconds = max(0, range.upperBound - range.lowerBound)
-            } else if let asset = mediaAssets.first(where: { $0.id == t.clip.mediaRef }) {
-                seconds = max(0, asset.duration)
-            } else {
-                seconds = 0
-            }
-            totalCost += CostEstimator.estimatedTranscriptionCost(durationSeconds: seconds) ?? 0
-        }
-        return totalCost
-    }
-
     private func resolvedCaptionTargets(for request: CaptionRequest) -> [CaptionTarget] {
         let candidates = request.autoDetect ? captionTargets(ids: []) : captionTargets(ids: request.sourceClipIds)
         return candidates.compactMap { c in
@@ -194,8 +166,6 @@ extension EditorViewModel {
             let range = CaptionTranscriptMapper.sourceUnion(for: t.clip.mediaRef, clips: targetClips, fps: timeline.fps)
             return TranscribeJob(mediaRef: t.clip.mediaRef, url: url, range: range, isVideo: captionUsesVideoAudioExtraction(for: t.clip))
         }
-        let projectId = projectId
-
         let outcomes = await withTaskGroup(of: (String, Result<TranscriptionResult, Error>).self) { group in
             for job in jobs {
                 group.addTask {
@@ -215,8 +185,7 @@ extension EditorViewModel {
                             result = try await CloudTranscription.transcribe(
                                 fileURL: job.url,
                                 range: job.range,
-                                preferredLocale: request.locale,
-                                projectId: projectId
+                                preferredLocale: request.locale
                             )
                         }
                         return (job.mediaRef, .success(result))
