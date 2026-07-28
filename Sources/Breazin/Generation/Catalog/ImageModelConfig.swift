@@ -29,8 +29,8 @@ struct ImageModelConfig: Identifiable, Sendable {
     static var allModels: [ImageModelConfig] { ModelCatalog.shared.image }
 
     @MainActor
-    static var nanoBananaPro: ImageModelConfig? {
-        allModels.first(where: { $0.id == "nano-banana-pro" })
+    static var preferredEditModel: ImageModelConfig? {
+        allModels.first(where: \.supportsImageReference)
     }
 
     let entry: CatalogEntry
@@ -38,8 +38,6 @@ struct ImageModelConfig: Identifiable, Sendable {
 
     var id: String { entry.id }
     var displayName: String { entry.displayName }
-    var paidOnly: Bool { entry.paidOnly }
-    var creditsPerImage: [String: Double] { entry.creditsPerImage ?? [:] }
 
     var resolutions: [String]? { caps.resolutions }
     var aspectRatios: [String] { caps.aspectRatios }

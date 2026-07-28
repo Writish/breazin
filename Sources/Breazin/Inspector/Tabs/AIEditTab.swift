@@ -5,7 +5,6 @@ struct AIEditTab: View {
     /// Clip id from the timeline.
     let clipId: String?
     @Environment(EditorViewModel.self) private var editor
-    @Bindable private var account = AccountService.shared
     @State private var rerunError: String?
     @State private var replaceClipSource: Bool = false
     @State private var useTrimmedClip: Bool = true
@@ -108,11 +107,7 @@ struct AIEditTab: View {
     }
 
     private var rerunDescription: String {
-        guard let gen = asset.generationInput,
-              let cost = CostEstimator.cost(for: gen) else {
-            return "Regenerate with the same parameters"
-        }
-        return "Regenerate · \(CostEstimator.format(cost))"
+        "Regenerate with the same parameters"
     }
 
     // MARK: - Replace toggle
@@ -204,10 +199,8 @@ struct AIEditTab: View {
             for: asset,
             effectiveDurationOverride: effectiveDurationForAvailability
         )
-        let paidBlocked = (action == .upscale || action == .edit) && !account.isPaid
-        let isEnabled = availability.isAvailable && !paidBlocked && aiDisabledReason == nil
-        let disabledReason = aiDisabledReason
-            ?? (paidBlocked ? "Requires a paid plan" : availability.reason)
+        let isEnabled = availability.isAvailable && aiDisabledReason == nil
+        let disabledReason = aiDisabledReason ?? availability.reason
 
         descriptiveActionRow(
             icon: icon,
@@ -232,15 +225,12 @@ struct AIEditTab: View {
 
     @ViewBuilder
     private func audioTransformActionRow(kind: AudioTransformEditKind) -> some View {
-        let model = kind.model
         let availability = kind.availability(
             for: asset,
             effectiveDurationOverride: effectiveDurationForAvailability
         )
-        let paidBlocked = model?.paidOnly == true && !account.isPaid
-        let isEnabled = availability.isAvailable && !paidBlocked && aiDisabledReason == nil
-        let disabledReason = aiDisabledReason
-            ?? (paidBlocked ? "Requires a paid plan" : availability.reason)
+        let isEnabled = availability.isAvailable && aiDisabledReason == nil
+        let disabledReason = aiDisabledReason ?? availability.reason
 
         descriptiveActionRow(
             icon: kind.iconName,
@@ -405,9 +395,7 @@ struct AIEditTab: View {
     }
 
     private func upscaleLabel(for model: UpscaleModelConfig) -> String {
-        let seconds = Int((effectiveDurationForAvailability ?? asset.duration).rounded())
-        let cost = CostEstimator.upscaleCost(model: model, durationSeconds: max(1, seconds))
-        return "\(model.displayName) · \(model.speed) · \(CostEstimator.format(cost))"
+        "\(model.displayName) · \(model.speed)"
     }
 
     private func runUpscale(_ model: UpscaleModelConfig) {
@@ -424,9 +412,9 @@ struct AIEditTab: View {
     private var shouldReplace: Bool { replaceClipSource && clipId != nil }
 
     private var aiDisabledReason: String? {
-        if account.isMisconfigured { return "AI is unavailable" }
-        if !account.isSignedIn { return "Sign in to use AI" }
-        return nil
+        ProviderModelCatalog.hasConfiguredGenerationProvider
+            ? nil
+            : "Add a provider API key in Settings > Providers"
     }
 
     private func markReplacementPendingIfNeeded() {

@@ -26,14 +26,21 @@ final class SampleProjectService {
 
         var errorDescription: String? {
             switch self {
-            case .notConfigured: "Backend not configured."
+            case .notConfigured: "Sample catalog not configured."
             case .http(let code): "Server returned HTTP \(code)."
             case .malformed: "The sample response was malformed."
             }
         }
     }
 
-    private var baseURL: URL? { BackendConfig.convexHttpURL }
+    /// Optional Breazin-owned sample catalog. No network request is made unless
+    /// the app bundle explicitly provides this endpoint.
+    private var baseURL: URL? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "BreazinSampleCatalogURL") as? String,
+              !value.isEmpty
+        else { return nil }
+        return URL(string: value)
+    }
 
     // MARK: - Listing
 

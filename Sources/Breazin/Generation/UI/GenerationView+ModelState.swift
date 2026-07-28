@@ -36,37 +36,28 @@ extension GenerationView {
         return ProviderCredentialStore.loadAPIKey(for: currentProviderID) != nil
     }
 
-    var aiAllowed: Bool { usesDirectProvider ? directProviderReady : account.aiAllowed }
+    var aiAllowed: Bool { directProviderReady }
 
-    var currentModelLocked: Bool {
-        guard !account.isPaid else { return false }
-        switch selectedType {
-        case .video: return videoModel.paidOnly
-        case .image: return imageModel.paidOnly
-        case .audio: return audioModel.paidOnly
-        }
-    }
+    var currentModelLocked: Bool { false }
 
     private func selectedModel<T>(_ models: [T], at index: Int) -> T {
         let safeIndex = models.indices.contains(index) ? index : models.startIndex
         return models[safeIndex]
     }
 
-    private func isAvailable(_ paidOnly: Bool) -> Bool { account.isPaid || !paidOnly }
-
     var enabledVideoModels: [(index: Int, model: VideoModelConfig)] {
         videoModels.enumerated()
-            .filter { ModelPreferences.shared.isEnabled($0.element.id) && isAvailable($0.element.paidOnly) }
+            .filter { ModelPreferences.shared.isEnabled($0.element.id) }
             .map { (index: $0.offset, model: $0.element) }
     }
     var enabledImageModels: [(index: Int, model: ImageModelConfig)] {
         imageModels.enumerated()
-            .filter { ModelPreferences.shared.isEnabled($0.element.id) && isAvailable($0.element.paidOnly) }
+            .filter { ModelPreferences.shared.isEnabled($0.element.id) }
             .map { (index: $0.offset, model: $0.element) }
     }
     var enabledAudioModels: [(index: Int, model: AudioModelConfig)] {
         audioModels.enumerated()
-            .filter { ModelPreferences.shared.isEnabled($0.element.id) && isAvailable($0.element.paidOnly) }
+            .filter { ModelPreferences.shared.isEnabled($0.element.id) }
             .map { (index: $0.offset, model: $0.element) }
     }
     var enabledAudioModelsByCategory: [AudioModelConfig.Category: [(index: Int, model: AudioModelConfig)]] {
@@ -112,7 +103,7 @@ extension GenerationView {
 
     var hasAnySettings: Bool {
         switch selectedType {
-        case .video: return !videoModel.durations.isEmpty || !videoModel.aspectRatios.isEmpty || videoModel.resolutions != nil || videoModel.audioDiscountRate != nil
+        case .video: return !videoModel.durations.isEmpty || !videoModel.aspectRatios.isEmpty || videoModel.resolutions != nil
         case .image: return !imageModel.aspectRatios.isEmpty || imageModel.resolutions != nil || imageModel.qualities != nil || imageModel.maxImages > 1
         case .audio:
             return audioModel.supportsInstrumental || audioModel.durations != nil
@@ -164,7 +155,7 @@ extension GenerationView {
     }
 
     var supportsAudioToggle: Bool {
-        selectedType == .video && videoModel.audioDiscountRate != nil
+        false
     }
 
     var effectiveGenerateAudio: Bool {

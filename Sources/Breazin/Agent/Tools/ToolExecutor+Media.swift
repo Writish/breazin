@@ -44,7 +44,6 @@ extension ToolExecutor {
             if let path = folderPathString(entry.folderId, editor: editor) { a["folder"] = path }
             if pending, let status { a["generationStatus"] = status }
             if !idFilter.isEmpty, let status, status.hasPrefix("failed: ") {
-                feedbackState.recordError(String(status.dropFirst("failed: ".count)))
             }
             if let prompt = Self.truncatedPrompt(entry.generationInput?.prompt) { a["prompt"] = prompt }
             assets.append(a)

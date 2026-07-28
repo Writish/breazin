@@ -48,6 +48,9 @@ enum EditAction {
             return .available
 
         case .edit:
+            guard EditSubmitter.editSeed(for: asset) != nil else {
+                return .disabled(reason: "No configured provider model supports this edit")
+            }
             switch asset.type {
             case .video:
                 let duration = effectiveDurationOverride ?? Self.effectiveDuration(of: asset)

@@ -21,6 +21,15 @@ enum ProviderModelCatalog {
         }
     }
 
+    static var hasConfiguredGenerationProvider: Bool {
+        ProviderCredentialStore.loadAPIKey(for: volcengineArk) != nil
+    }
+
+    static func isConfigured(for modelID: String) -> Bool {
+        guard let providerID = providerID(for: modelID) else { return false }
+        return ProviderCredentialStore.loadAPIKey(for: providerID) != nil
+    }
+
     static func makeProvider(for modelID: String) throws -> any GenerationProvider {
         guard providerID(for: modelID) == volcengineArk else {
             throw ProviderGenerationError.unsupportedModel(modelID)
@@ -32,8 +41,7 @@ enum ProviderModelCatalog {
     }
 
     /// Product-owned catalog assembled from implemented provider adapters.
-    /// It is available before account or network initialization and never falls
-    /// back to the legacy Convex `models:list` subscription.
+    /// It is available before provider network initialization.
     static let catalogEntries: [CatalogEntry] = [
         CatalogEntry(
             id: seedream5Pro,
@@ -47,8 +55,7 @@ enum ProviderModelCatalog {
                 qualities: nil,
                 supportsImageReference: true,
                 maxImages: 1
-            )),
-            paidOnly: false
+            ))
         ),
         CatalogEntry(
             id: seedance2,
@@ -72,8 +79,7 @@ enum ProviderModelCatalog {
                 referenceTagNoun: "reference",
                 requiresSourceVideo: false,
                 requiresReferenceImage: false
-            )),
-            paidOnly: false
+            ))
         ),
     ]
 }

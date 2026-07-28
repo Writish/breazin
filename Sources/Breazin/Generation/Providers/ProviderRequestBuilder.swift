@@ -3,7 +3,7 @@ import Foundation
 enum ProviderRequestBuilder {
     static func make(
         model: String,
-        params: BackendGenerationParams,
+        params: GenerationParameters,
         idempotencyKey: String
     ) throws -> ProviderGenerationRequest {
         switch params {

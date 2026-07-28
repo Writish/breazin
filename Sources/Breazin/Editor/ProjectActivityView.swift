@@ -4,10 +4,6 @@ import SwiftUI
 struct ProjectActivityView: View {
     let entries: [GenerationLogEntry]
 
-    private var total: Int {
-        entries.reduce(0) { $0 + ($1.costCredits ?? 0) }
-    }
-
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
@@ -22,9 +18,8 @@ struct ProjectActivityView: View {
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Spacer()
                 if !entries.isEmpty {
-                    Text("\(CostEstimator.format(total)) used")
+                    Text("\(entries.count) generation\(entries.count == 1 ? "" : "s")")
                         .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                        .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
@@ -56,11 +51,6 @@ struct ProjectActivityView: View {
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.xs)
-            Text(CostEstimator.format(entry.costCredits))
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 68, alignment: .leading)
             Text(entry.modelDisplayName)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -95,7 +85,7 @@ struct ProjectActivityButton: View {
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
-        .help("Project Activity · \(CostEstimator.format(editor.totalGenerationCost)) used")
+        .help("Project Activity · \(editor.generationLogEntries.count) generations")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ProjectActivityView(entries: editor.generationLogEntries)
         }

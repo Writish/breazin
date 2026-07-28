@@ -242,15 +242,6 @@ extension GenerationView {
                     .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            if selectedType == .video, videoModel.audioDiscountRate != nil {
-                let discount = videoModel.audioDiscount(for: effectiveResolution)
-                let savings = discount.map { Int(((1 - $0) * 100).rounded()) }
-                Toggle("Generate audio", isOn: $generateAudio)
-                    .controlSize(.small)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .help(savings.map { "Turn off to save \($0)% on generation cost." } ?? "Turn off to skip audio generation.")
-            }
         }
         .padding(AppTheme.Spacing.lg)
         .frame(width: selectedType == .image ? GenerationSettingsLayout.imagePopoverWidth : GenerationSettingsLayout.popoverWidth)

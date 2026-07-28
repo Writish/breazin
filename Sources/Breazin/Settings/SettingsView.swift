@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case account
     case general
     case providers
     case models
@@ -13,7 +12,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .account: return "Account"
         case .general: return "General"
         case .providers: return "Providers"
         case .models: return "Models"
@@ -25,7 +23,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .account: return "person.circle"
         case .general: return "gearshape"
         case .providers: return "key.horizontal"
         case .models: return "square.stack.3d.up"
@@ -37,17 +34,14 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
-    @Bindable private var account = AccountService.shared
     @State private var selectedTab: SettingsTab
 
-    init(initialTab: SettingsTab = .account) {
+    init(initialTab: SettingsTab = .providers) {
         _selectedTab = State(initialValue: initialTab)
     }
 
     private var visibleTabs: [SettingsTab] {
-        SettingsTab.allCases.filter { tab in
-            !(tab == .account && account.isMisconfigured)
-        }
+        SettingsTab.allCases
     }
 
     var body: some View {
@@ -78,13 +72,9 @@ struct SettingsView: View {
 private struct SettingsSidebar: View {
     @Binding var selectedTab: SettingsTab
     let visibleTabs: [SettingsTab]
-    @Bindable private var account = AccountService.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !account.isMisconfigured {
-                IdentityStrip()
-            }
             tabList
             Spacer(minLength: 0)
         }
@@ -131,8 +121,6 @@ private struct SettingsDetail: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxl) {
                             switch tab {
-                            case .account:
-                                AccountPane()
                             case .general:
                                 SettingsSection(title: "Notifications") {
                                     NotificationsPane()

@@ -31,9 +31,9 @@ enum AgentInstructions {
           only to touch individual caption clips.
         - Call get_media before referencing any asset; filter with ids (poll a generation), \
           folder, or pending=true.
-        - Call list_models before any generate_* or upscale call. If get_timeline says \
-          canGenerate=false, generation will fail — ask the user to sign in to Breazin or add \
-          a supported provider API key in Settings > Providers.
+        - Call list_models before generate_video or generate_image. If get_timeline says \
+          canGenerate=false, generation will fail — ask the user to add a supported provider \
+          API key in Settings > Providers.
         - Never describe an asset from its filename — inspect_media first. On long media work \
           coarse to fine: overview=true storyboard, then transcript segments, then zoom with \
           startSeconds/endSeconds.
@@ -118,12 +118,6 @@ enum AgentInstructions {
         - Videos, 8–20 words: camera movement + subject action. With a startFrameMediaRef, \
           don't re-describe the frame — spend the words on motion and sound. State dialogue, \
           VO, SFX, and music explicitly; silent video is usually a bug.
-
-        # Feedback
-        - When a capability is missing or broken, a result is clearly wrong, or the user is \
-          plainly hitting a limitation, call send_feedback once with a paraphrased summary — \
-          never verbatim user content. Send workflow improvements as `suggestion`. One per \
-          distinct issue; mention it to the user briefly.
 
         # Communication
         - One or two sentences; lead with the outcome. The user watches the timeline change — \

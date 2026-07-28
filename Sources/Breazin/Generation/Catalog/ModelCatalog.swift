@@ -99,13 +99,6 @@ struct CatalogEntry: Decodable, Sendable {
     let allowedEndpoints: [String]
     let responseShape: ResponseShape
     let uiCapabilities: UICapabilities
-    let creditsPerSecond: [String: Double]?
-    let audioDiscountRate: [String: Double]?
-    let creditsPerImage: [String: Double]?
-    let qualities: [String]?
-    let audioPricing: AudioPricing?
-    let creditsPerSecondUpscale: Double?
-    let paidOnly: Bool
 
     enum Kind: String, Decodable, Sendable { case video, image, audio, upscale }
     enum ResponseShape: String, Decodable, Sendable {
@@ -119,35 +112,8 @@ struct CatalogEntry: Decodable, Sendable {
         case upscale(UpscaleCaps)
     }
 
-    enum AudioPricing: Decodable, Sendable {
-        case perThousandChars(rate: Double)
-        case perSecond(rate: Double)
-        case flat(price: Double)
-
-        private enum K: String, CodingKey { case mode, rate, price }
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: K.self)
-            switch try c.decode(String.self, forKey: .mode) {
-            case "perThousandChars":
-                self = .perThousandChars(rate: try c.decode(Double.self, forKey: .rate))
-            case "perSecond":
-                self = .perSecond(rate: try c.decode(Double.self, forKey: .rate))
-            case "flat":
-                self = .flat(price: try c.decode(Double.self, forKey: .price))
-            default:
-                throw DecodingError.dataCorruptedError(
-                    forKey: .mode, in: c,
-                    debugDescription: "Unknown audio pricing mode"
-                )
-            }
-        }
-    }
-
     private enum CodingKeys: String, CodingKey {
         case id, kind, displayName, allowedEndpoints, responseShape, uiCapabilities
-        case creditsPerSecond, audioDiscountRate, creditsPerImage, qualities
-        case audioPricing, creditsPerSecondUpscale, paidOnly
     }
 
     init(
@@ -156,14 +122,7 @@ struct CatalogEntry: Decodable, Sendable {
         displayName: String,
         allowedEndpoints: [String],
         responseShape: ResponseShape,
-        uiCapabilities: UICapabilities,
-        creditsPerSecond: [String: Double]? = nil,
-        audioDiscountRate: [String: Double]? = nil,
-        creditsPerImage: [String: Double]? = nil,
-        qualities: [String]? = nil,
-        audioPricing: AudioPricing? = nil,
-        creditsPerSecondUpscale: Double? = nil,
-        paidOnly: Bool = false
+        uiCapabilities: UICapabilities
     ) {
         self.id = id
         self.kind = kind
@@ -171,13 +130,6 @@ struct CatalogEntry: Decodable, Sendable {
         self.allowedEndpoints = allowedEndpoints
         self.responseShape = responseShape
         self.uiCapabilities = uiCapabilities
-        self.creditsPerSecond = creditsPerSecond
-        self.audioDiscountRate = audioDiscountRate
-        self.creditsPerImage = creditsPerImage
-        self.qualities = qualities
-        self.audioPricing = audioPricing
-        self.creditsPerSecondUpscale = creditsPerSecondUpscale
-        self.paidOnly = paidOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -187,13 +139,6 @@ struct CatalogEntry: Decodable, Sendable {
         self.displayName = try c.decode(String.self, forKey: .displayName)
         self.allowedEndpoints = try c.decode([String].self, forKey: .allowedEndpoints)
         self.responseShape = try c.decode(ResponseShape.self, forKey: .responseShape)
-        self.creditsPerSecond = try c.decodeIfPresent([String: Double].self, forKey: .creditsPerSecond)
-        self.audioDiscountRate = try c.decodeIfPresent([String: Double].self, forKey: .audioDiscountRate)
-        self.creditsPerImage = try c.decodeIfPresent([String: Double].self, forKey: .creditsPerImage)
-        self.qualities = try c.decodeIfPresent([String].self, forKey: .qualities)
-        self.audioPricing = try c.decodeIfPresent(AudioPricing.self, forKey: .audioPricing)
-        self.creditsPerSecondUpscale = try c.decodeIfPresent(Double.self, forKey: .creditsPerSecondUpscale)
-        self.paidOnly = try c.decodeIfPresent(Bool.self, forKey: .paidOnly) ?? false
         switch self.kind {
         case .video:
             self.uiCapabilities = .video(try c.decode(VideoCaps.self, forKey: .uiCapabilities))

@@ -1,42 +1,20 @@
-import AVFoundation
 import Foundation
 
 extension ToolExecutor {
-    private var canUsePaidModels: Bool { AccountService.shared.isPaid }
-    private func modelAvailable(paidOnly: Bool) -> Bool { canUsePaidModels || !paidOnly }
-
-    private func requirePlan(for modelId: String, paidOnly: Bool) throws {
-        if paidOnly && !canUsePaidModels {
-            throw ToolError(
-                "Model '\(modelId)' requires a paid plan. Pick a free model from list_models, "
-                + "or tell the user to subscribe."
-            )
-        }
-    }
-
     private func requireGenerationAccess(for modelId: String) throws {
-        if let providerID = ProviderModelCatalog.providerID(for: modelId) {
-            guard ProviderCredentialStore.loadAPIKey(for: providerID) != nil else {
-                throw ToolError("Add the Volcengine API key in Settings > Providers, then retry.")
-            }
-            return
+        guard let providerID = ProviderModelCatalog.providerID(for: modelId) else {
+            throw ToolError("Model '\(modelId)' has no installed provider adapter.")
         }
-        guard AccountService.shared.isSignedIn else {
-            throw ToolError("Generation requires signing in to Breazin. Tell the user to sign in.")
-        }
-        guard AccountService.shared.hasCredits else {
-            throw ToolError("Out of credits. Tell the user to add credits or subscribe to keep generating.")
+        guard ProviderCredentialStore.loadAPIKey(for: providerID) != nil else {
+            throw ToolError("Add the Volcengine API key in Settings > Providers, then retry.")
         }
     }
 
-    private func defaultModelId(_ ids: [(id: String, paidOnly: Bool)], kind: String) throws -> String {
+    private func defaultModelId(_ ids: [String], kind: String) throws -> String {
         guard !ids.isEmpty else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
-        guard let match = ids.first(where: { modelAvailable(paidOnly: $0.paidOnly) }) else {
-            throw ToolError("No \(kind) model is available on the current plan. Tell the user to subscribe.")
-        }
-        return match.id
+        return ids[0]
     }
 
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) throws -> ToolResult {
@@ -46,12 +24,11 @@ extension ToolExecutor {
             throw ToolError("Cannot generate a sequence. Sequences are timelines.")
         case .video:
             let modelId = try args.string("model") ?? defaultModelId(
-                VideoModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "video")
+                VideoModelConfig.allModels.map(\.id), kind: "video")
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
             try requireGenerationAccess(for: model.id)
-            try requirePlan(for: model.id, paidOnly: model.paidOnly)
             return model.requiresSourceVideo
                 ? try generateVideoEdit(editor, args, prompt: prompt, model: model)
                 : try generateVideoText(editor, args, prompt: prompt, model: model)
@@ -195,12 +172,11 @@ extension ToolExecutor {
     ) throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
         let modelId = try args.string("model") ?? defaultModelId(
-            ImageModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "image")
+            ImageModelConfig.allModels.map(\.id), kind: "image")
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
         try requireGenerationAccess(for: model.id)
-        try requirePlan(for: model.id, paidOnly: model.paidOnly)
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.resolutions?.first
         let quality = args.string("quality") ?? model.qualities?.last
@@ -257,192 +233,6 @@ extension ToolExecutor {
         )
     }
 
-    func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
-        guard AccountService.shared.isSignedIn else {
-            throw ToolError("Generation requires signing in to Breazin. Tell the user to sign in.")
-        }
-        guard AccountService.shared.hasCredits else {
-            throw ToolError("Out of credits. Tell the user to add credits or subscribe to keep generating.")
-        }
-        let modelId = try args.string("model") ?? defaultModelId(
-            AudioModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "audio")
-        guard let model = AudioModelConfig.allModels.first(where: { $0.id == modelId }) else {
-            throw ToolError("Unknown model '\(modelId)'. Available: \(AudioModelConfig.allModels.map(\.id).joined(separator: ", "))")
-        }
-        try requirePlan(for: model.id, paidOnly: model.paidOnly)
-
-        let prompt = (args.string("prompt") ?? "").trimmingCharacters(in: .whitespaces)
-        let acceptsVideo = model.inputs.contains(.video)
-        let sourceMediaRef = args.string("sourceMediaRef")
-            ?? args.string("videoSourceMediaRef")
-        var sourceAsset: MediaAsset?
-        var videoURL: String?
-        var spanSeconds: Double?
-        var placementStartFrame: Int?   // set when a timeline span is given -> auto-place on the timeline
-        if let ref = sourceMediaRef {
-            let candidate = try asset(ref, editor: editor, label: "Source media")
-            if args.string("sourceMediaRef") == nil, candidate.type != .video {
-                throw ToolError("videoSourceMediaRef must be a video asset (got \(candidate.type.rawValue)).")
-            }
-            guard model.acceptsSource(candidate.type) else {
-                throw ToolError("Model '\(model.id)' does not accept \(candidate.type.rawValue) source media.")
-            }
-            if model.usesSourceURL, candidate.type == .video, !candidate.hasAudio {
-                throw ToolError("\(model.displayName) requires source video with an audio track.")
-            }
-            if let err = model.validate(spanSeconds: candidate.duration) {
-                throw ToolError(err)
-            }
-            sourceAsset = candidate
-            spanSeconds = candidate.duration
-        } else if let start = args.int("videoSourceStartFrame"), let end = args.int("videoSourceEndFrame") {
-            guard acceptsVideo else {
-                throw ToolError("Model '\(model.id)' does not accept a video input (see list_models 'inputs').")
-            }
-            guard !model.usesSourceURL else {
-                throw ToolError("Use sourceMediaRef for \(model.displayName).")
-            }
-            guard start >= 0, end > start else {
-                throw ToolError("videoSourceEndFrame must be greater than videoSourceStartFrame (>= 0).")
-            }
-            if let err = model.validate(spanSeconds: Double(end - start) / Double(max(1, editor.timeline.fps))) {
-                throw ToolError(err)
-            }
-            let mp4 = try await TimelineRenderer.render(
-                timeline: editor.timeline, resolver: editor.mediaResolver,
-                resolveTimeline: editor.timelineResolver(),
-                missingMediaRefs: editor.missingMediaRefs,
-                startFrame: start, frameCount: end - start,
-                shortSide: 240, includeAudio: false,
-                preset: AVAssetExportPresetLowQuality
-            )
-            defer { try? FileManager.default.removeItem(at: mp4) }
-            videoURL = try await GenerationBackend.uploadReference(fileURL: mp4, contentType: "video/mp4")
-            spanSeconds = Double(end - start) / Double(max(1, editor.timeline.fps))
-            placementStartFrame = start
-        }
-
-        if model.acceptsSourceMedia && !model.inputs.contains(.text)
-            && sourceAsset == nil && videoURL == nil {
-            throw ToolError("Model '\(model.id)' needs source media. Provide sourceMediaRef.")
-        }
-
-        let instrumental = args.bool("instrumental") ?? false
-        let requestedDurationSeconds = args.int("duration")
-        let sourceDurationSeconds = spanSeconds.map { max(1, Int($0.rounded())) }
-        let durationSeconds = model.usesSourceURL
-            ? sourceDurationSeconds
-            : (requestedDurationSeconds ?? sourceDurationSeconds)
-        let params = AudioGenerationParams(
-            prompt: prompt,
-            voice: model.voices != nil ? (args.string("voice") ?? model.defaultVoice) : nil,
-            lyrics: model.supportsLyrics ? args.string("lyrics") : nil,
-            styleInstructions: model.supportsStyleInstructions ? args.string("styleInstructions") : nil,
-            instrumental: model.supportsInstrumental ? instrumental : false,
-            durationSeconds: durationSeconds,
-            videoURL: videoURL,
-            sourceURL: nil,
-            targetLanguage: model.targetLanguages != nil
-                ? args.string("targetLanguage") : nil
-        )
-        if let err = model.validate(params: params) {
-            throw ToolError(err)
-        }
-
-        var genInput = GenerationInput(
-            prompt: prompt,
-            model: model.id,
-            duration: durationSeconds ?? 0,
-            aspectRatio: "",
-            resolution: nil,
-            voice: params.voice,
-            lyrics: params.lyrics,
-            styleInstructions: params.styleInstructions,
-            instrumental: model.supportsInstrumental ? instrumental : nil,
-            targetLanguage: params.targetLanguage
-        )
-        if let sourceAsset {
-            genInput.setAudioSourceAsset(sourceAsset)
-        }
-
-        let references = sourceAsset.map { [$0] } ?? []
-        let folderId = try resolveFolder(args, editor: editor, fallbackReferences: references)
-        let submission = AudioGenerationSubmission.make(
-            genInput: genInput,
-            model: model,
-            params: params,
-            name: args.string("name"),
-            folderId: folderId,
-            references: references
-        )
-
-        if let startFrame = placementStartFrame, let sourceSpan = spanSeconds {
-            let outputSpan = requestedDurationSeconds.map(Double.init) ?? sourceSpan
-            let placeholderId = editor.undo.perform("Add \(model.category.label) (Agent)") {
-                let placeholderId = submission.submit(
-                    service: editor.generationService,
-                    projectURL: editor.projectURL,
-                    editor: editor,
-                    onComplete: { asset in
-                        editor.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
-                    }
-                )
-                editor.placeGeneratingAudioClip(
-                    placeholderId: placeholderId, startFrame: startFrame,
-                    spanSeconds: outputSpan, actionName: "Add \(model.category.label)"
-                )
-                return placeholderId
-            }
-            return .ok("Generation started and placed on the timeline at frame \(startFrame). Placeholder asset ID: \(placeholderId). Model: \(model.displayName), \(model.category.label) (scored from video).")
-        }
-
-        let placeholderId = submission.submit(
-            service: editor.generationService,
-            projectURL: editor.projectURL,
-            editor: editor
-        )
-        let sourceNote = sourceAsset != nil || videoURL != nil ? " (from source media)" : ""
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), \(model.category.label)\(sourceNote). Place it with add_clips.")
-    }
-
-    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
-        let mediaRef = try args.requireString("mediaRef")
-        let asset = try asset(mediaRef, editor: editor)
-        guard asset.type == .video || asset.type == .image else {
-            throw ToolError("Upscale supports video and image assets only (got \(asset.type.rawValue))")
-        }
-        guard AccountService.shared.isSignedIn else {
-            throw ToolError("Upscale requires signing in to Breazin. Tell the user to sign in.")
-        }
-        guard AccountService.shared.hasCredits else {
-            throw ToolError("Out of credits. Tell the user to add credits or subscribe to keep generating.")
-        }
-
-        let available = UpscaleModelConfig.models(for: asset.type)
-        let model: UpscaleModelConfig
-        if let requested = args.string("model") {
-            guard let match = available.first(where: { $0.id == requested }) else {
-                let ids = available.map(\.id).joined(separator: ", ")
-                throw ToolError("Model '\(requested)' does not support \(asset.type.rawValue). Available: \(ids)")
-            }
-            try requirePlan(for: match.id, paidOnly: match.paidOnly)
-            model = match
-        } else {
-            guard let first = available.first(where: { modelAvailable(paidOnly: $0.paidOnly) }) else {
-                throw ToolError("No upscaler available for \(asset.type.rawValue) on the current plan.")
-            }
-            model = first
-        }
-
-        let trimmed = try trimmedSource(args, editor: editor, source: asset)
-        guard let placeholderId = EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor, trimmedSource: trimmed
-        ) else {
-            throw ToolError("Failed to start upscale")
-        }
-        return .ok("Upscale started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")")
-    }
-
     private func trimmedSource(
         _ args: [String: Any], editor: EditorViewModel, source: MediaAsset
     ) throws -> TrimmedSource? {
@@ -471,23 +261,11 @@ extension ToolExecutor {
         var out: [[String: Any]] = []
         if filter == nil || filter == "video" {
             out += VideoModelConfig.allModels
-                .filter { modelAvailable(paidOnly: $0.paidOnly) }
                 .map { Self.videoModelInfo($0, includeType: true) }
         }
         if filter == nil || filter == "image" {
             out += ImageModelConfig.allModels
-                .filter { modelAvailable(paidOnly: $0.paidOnly) }
                 .map { Self.imageModelInfo($0, includeType: true) }
-        }
-        if filter == nil || filter == "audio" {
-            out += AudioModelConfig.allModels
-                .filter { modelAvailable(paidOnly: $0.paidOnly) }
-                .map { Self.audioModelInfo($0) }
-        }
-        if filter == nil || filter == "upscale" {
-            out += UpscaleModelConfig.allModels
-                .filter { modelAvailable(paidOnly: $0.paidOnly) }
-                .map { Self.upscaleModelInfo($0) }
         }
         let body: [String: Any] = [
             "models": out,
@@ -534,39 +312,4 @@ extension ToolExecutor {
         return info
     }
 
-    nonisolated static func audioModelInfo(_ m: AudioModelConfig) -> [String: Any] {
-        var info: [String: Any] = [
-            "id": m.id, "displayName": m.displayName,
-            "type": "audio",
-            "category": m.category.rawValue,
-            "inputs": m.inputs.map(\.rawValue),
-            "minPromptLength": m.minPromptLength,
-            "supportsLyrics": m.supportsLyrics,
-            "supportsInstrumental": m.supportsInstrumental,
-            "supportsStyleInstructions": m.supportsStyleInstructions,
-        ]
-        if let voices = m.voices {
-            info["voicesSample"] = Array(voices.prefix(3))
-            info["voiceCount"] = voices.count
-        }
-        if let defaultVoice = m.defaultVoice { info["defaultVoice"] = defaultVoice }
-        if let durations = m.durations { info["durations"] = durations }
-        if m.acceptsSourceMedia {
-            info["minSeconds"] = m.minSeconds
-            info["maxSeconds"] = m.maxSeconds
-        }
-        if let targetLanguages = m.targetLanguages {
-            info["targetLanguages"] = targetLanguages
-        }
-        return info
-    }
-
-    nonisolated static func upscaleModelInfo(_ m: UpscaleModelConfig) -> [String: Any] {
-        [
-            "id": m.id, "displayName": m.displayName,
-            "type": "upscale",
-            "speed": m.speed,
-            "supportedTypes": m.supportedTypes.map(\.rawValue).sorted(),
-        ]
-    }
 }

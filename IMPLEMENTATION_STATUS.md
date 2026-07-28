@@ -21,7 +21,10 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - `ModelCatalog` no longer subscribes to Convex. The app-owned provider catalog is populated synchronously from implemented adapters, is available before account/network initialization, and currently exposes only Seedream 5.0 Pro and Seedance 2.0.
 - Cloud transcription no longer stages audio through Palmier storage or submits a Palmier transcription Job. Breazin extracts a local 16 kHz mono WAV, uploads it directly to OpenAI's `audio/transcriptions` endpoint with `whisper-1` verbose word/segment timestamps, maps the result back to source/timeline time, and caches it under a provider-versioned key.
 - OpenAI transcription is an independent BYOK Keychain credential (`openai-transcription`), not the planned GPT Image 2 OAuth credential. Settings and caption/speaker UX state that provider usage is billed externally; missing configuration falls back to Apple's local transcription for Agent tools.
-- The retired `TranscriptionBackend` implementation has been deleted. The broader Clerk/Convex/credits/Palmier generation and account cleanup remains the next Phase 3 slice and is not represented as complete.
+- The retired `TranscriptionBackend`, account/Clerk/Convex modules, legacy Agent and generation clients, private-backend upload path, subscription/credits UI, cost estimator, and three SwiftPM backend dependencies have been removed. AI Chat is now BYOK-only; image/video generation requires an installed provider adapter and provider credential.
+- Project activity remains a provider-neutral generation history. New saves no longer write `cost` or `costCredits`; legacy fields are tolerated and discarded while decoding. The legacy `backendJobId` project field and `.palmier` file identifiers remain compatibility-read contracts only, and old remote Jobs close locally with an explicit non-resumable message instead of being queried or resubmitted.
+- Product tool discovery no longer advertises unimplemented audio generation, upscaling, or backend feedback actions. The audio panel shows a truthful unavailable state until a provider adapter exists. Optional sample projects perform no network request unless the app bundle explicitly defines `BreazinSampleCatalogURL`.
+- The remaining Phase 3 work is limited to deciding/replacing the hosted visual-search model asset currently served from the legacy Hugging Face namespace and any optional account/feedback platform product decision; no Palmier/Clerk/Convex runtime client remains in the app.
 
 ## Verification boundary
 
@@ -32,6 +35,7 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - The 2026-07-28 Seedance restart drill exited with an accepted remote Job, relaunched 31 seconds later, and completed with the same provider task ID, one attempt, one result, 108,900 total Tokens, project media installation, and deleted upload state. This verifies no-resubmit restart recovery. Because the project was opened before the local terminal write, unopened-project output staging remains verified by deterministic tests rather than a separate live observation.
 - Strict Phase 2 is closed in source and deterministic acceptance. The final retry follow-up passed 150 selected tests across 9 suites, an additional focused 28-test run during output-URL retry hardening, and—after rebasing onto the latest upstream main—the complete 1,206-test regression across 184 suites.
 - Phase 3 adapter contracts currently include a 32-test focused run covering the local provider catalog, OpenAI multipart/auth/timestamp/error behavior, provider configuration fallback, cloud-language validation, and transcript cache behavior. No paid OpenAI transcription call has been made or claimed; live BYOK acceptance remains manual.
+- The Phase 3 backend-removal slice compiled the complete app/test graph after deleting Clerk/Convex dependencies and passed 37 focused tests across global recovery, OpenAI transcription, and project JSON compatibility. The compile still reports pre-existing Swift concurrency warnings in `HDRVideoExporter` and `MCPHTTPServer`; they are not failures introduced by this slice.
 
 See `docs/development/phase-2-acceptance.md` for the evidence matrix and operator steps.
 
@@ -40,7 +44,7 @@ See `docs/development/phase-2-acceptance.md` for the evidence matrix and operato
 - Additional production evidence: the standalone authenticated R2 harness, live cancellation-near-completion drill, and stricter unopened-project staging observation remain useful live exercises. They are not represented as completed and do not replace the deterministic Phase 2 contracts.
 - External-Beta hardening: replace the bootstrap Broker bearer token with per-user/device authorization. Seedance task-status query timeout remains a non-terminal refresh error because Volcengine does not define `timeout` as a task terminal state; Seedream's synchronous response timeout is a separate terminal local condition because no queryable task ID exists.
 - OpenAI GPT Image 2 (OAuth route) and Midjourney (Discord bot route) are represented as unimplemented authentication/provider contracts only; neither integration is presented as working.
-- Phase 3 optional platform accounts and aggregated feedback require a backend/privacy decision.
+- Phase 3 optional platform accounts and aggregated feedback remain intentionally absent pending a backend/privacy decision.
 - Phase 4 release automation requires Apple Developer signing/notarization credentials and a Sparkle EdDSA key.
 - Phases 5 and 6 remain product milestones; no placeholder cloud endpoints or fake production integrations were added.
 

@@ -42,7 +42,7 @@ extension ToolExecutor {
         if ProviderCredentialStore.loadAPIKey(for: ProviderModelCatalog.volcengineArk) != nil {
             return true
         }
-        return AccountService.shared.isSignedIn && AccountService.shared.hasCredits
+        return ProviderModelCatalog.hasConfiguredGenerationProvider
     }
 
     static func rawTimelineDict(_ timeline: Timeline) -> [String: Any]? {

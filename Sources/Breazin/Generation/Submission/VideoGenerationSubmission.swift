@@ -8,7 +8,7 @@ struct VideoGenerationSubmission {
     let trimmedSourceOverride: TrimmedSource?
     let name: String?
     let folderId: String?
-    let buildParams: ([String]) -> BackendGenerationParams
+    let buildParams: ([String]) -> GenerationParameters
     let snapshotRefs: (@Sendable (inout GenerationInput, [String]) -> Void)?
     let preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)?
 

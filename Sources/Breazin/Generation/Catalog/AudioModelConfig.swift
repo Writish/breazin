@@ -56,13 +56,6 @@ struct AudioModelConfig: Identifiable, Sendable {
         case video
     }
 
-    enum Pricing: Sendable {
-        case perThousandChars(Double)
-        case perSecond(Double)
-        case flat(Double)
-        case unknown
-    }
-
     @MainActor
     static var allModels: [AudioModelConfig] { ModelCatalog.shared.audio }
 
@@ -71,7 +64,6 @@ struct AudioModelConfig: Identifiable, Sendable {
 
     var id: String { entry.id }
     var displayName: String { entry.displayName }
-    var paidOnly: Bool { entry.paidOnly }
 
     var category: Category {
         Category(rawValue: caps.category) ?? .tts
@@ -116,15 +108,6 @@ struct AudioModelConfig: Identifiable, Sendable {
             return "\(displayName) accepts at most \(maxSeconds)s of source media (selection is \(s)s)."
         }
         return nil
-    }
-
-    var pricing: Pricing {
-        switch entry.audioPricing {
-        case .perThousandChars(let rate): return .perThousandChars(rate)
-        case .perSecond(let rate): return .perSecond(rate)
-        case .flat(let price): return .flat(price)
-        case .none: return .unknown
-        }
     }
 
     func validate(params: AudioGenerationParams) -> String? {

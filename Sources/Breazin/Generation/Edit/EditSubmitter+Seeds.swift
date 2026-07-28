@@ -10,7 +10,7 @@ extension EditSubmitter {
             }
             modelId = model.id
         case .image:
-            guard let model = ImageModelConfig.nanoBananaPro else { return nil }
+            guard let model = ImageModelConfig.preferredEditModel else { return nil }
             modelId = model.id
         case .audio, .text, .lottie, .sequence:
             return nil

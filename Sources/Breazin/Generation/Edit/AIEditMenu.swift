@@ -15,15 +15,7 @@ struct AIEditMenu: View {
                 if availableActions.contains(.upscale) {
                     Menu("Upscale") {
                         ForEach(UpscaleModelConfig.models(for: asset.type)) { model in
-                            if model.paidOnly && !AccountService.shared.isPaid {
-                                Button {
-                                    SettingsWindowController.shared.show(tab: .account)
-                                } label: {
-                                    Label("\(model.displayName) (Paid)", systemImage: "lock.fill")
-                                }
-                            } else {
-                                Button(model.displayName) { runUpscale(model) }
-                            }
+                            Button(model.displayName) { runUpscale(model) }
                         }
                     }
                 }
@@ -56,8 +48,7 @@ struct AIEditMenu: View {
     }
 
     private var aiAllowed: Bool {
-        let account = AccountService.shared
-        return account.isSignedIn && !account.isMisconfigured
+        ProviderModelCatalog.hasConfiguredGenerationProvider
     }
 
     private var availableActions: [EditAction] {

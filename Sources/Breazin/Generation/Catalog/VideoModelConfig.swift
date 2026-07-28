@@ -13,9 +13,6 @@ struct VideoModelConfig: Identifiable, Sendable {
 
     var id: String { entry.id }
     var displayName: String { entry.displayName }
-    var paidOnly: Bool { entry.paidOnly }
-    var creditsPerSecond: [String: Double] { entry.creditsPerSecond ?? [:] }
-    var audioDiscountRate: [String: Double]? { entry.audioDiscountRate }
 
     var durations: [Int] { caps.durations }
     var resolutions: [String]? { caps.resolutions }
@@ -35,12 +32,6 @@ struct VideoModelConfig: Identifiable, Sendable {
 
     var supportsReferences: Bool {
         maxReferenceImages > 0 || maxReferenceVideos > 0 || maxReferenceAudios > 0
-    }
-
-    func audioDiscount(for resolution: String?) -> Double? {
-        guard let dict = audioDiscountRate else { return nil }
-        if let key = resolution, let v = dict[key] { return v }
-        return dict[""]
     }
 
     func validate(duration: Int, aspectRatio: String, resolution: String?) -> String? {

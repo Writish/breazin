@@ -25,16 +25,6 @@ struct AgentPanelView: View {
             prompt: "Add captions to my timeline. Transcribe spoken audio in timeline clips, build readable caption phrases on word boundaries, and place them as text clips aligned to the edit."
         ),
         AgentStarterPrompt(
-            title: "Create a voiceover",
-            systemImage: "waveform",
-            prompt: "Create a voiceover for my timeline. Draft concise narration for the current edit, generate the voiceover, and add it to an audio track aligned with the timeline."
-        ),
-        AgentStarterPrompt(
-            title: "Generate music and sync to my timeline",
-            systemImage: "music.note",
-            prompt: "Score my timeline with music. Inspect the edit's mood and pacing, generate music for the full timeline, and place it on an audio track aligned to the edit."
-        ),
-        AgentStarterPrompt(
             title: "Organize my media into structured folders",
             systemImage: "folder",
             prompt: "Organize my media into structured folders. Review all assets, create clearly named folders by role, scene, or type, move assets into them, and rename generic files when useful. Don't delete anything or change the timeline."
@@ -261,36 +251,13 @@ struct AgentPanelView: View {
                     .font(.system(size: AppTheme.FontSize.xs))
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.leading)
-                if let cta = errorCTA(for: err) {
-                    Button(action: cta.action) {
-                        Text(cta.title)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                    }
-                    .buttonStyle(.capsule(.secondary))
-                    .controlSize(.small)
+                Button("Open Agent Settings") {
+                    SettingsWindowController.shared.show(tab: .agent)
                 }
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .buttonStyle(.capsule(.secondary))
+                .controlSize(.small)
             }
-        }
-    }
-
-    private struct ErrorCTA {
-        let title: String
-        let action: () -> Void
-    }
-
-    private func errorCTA(for error: LegacyBackendClientError?) -> ErrorCTA? {
-        guard let error else { return nil }
-        switch error {
-        case .unauthenticated:
-            return ErrorCTA(title: "Sign in") {
-                SettingsWindowController.shared.show(tab: .account)
-            }
-        case .insufficientCredits:
-            return ErrorCTA(title: "View plans") {
-                SettingsWindowController.shared.show(tab: .account)
-            }
-        case .upstream:
-            return nil
         }
     }
 
@@ -317,52 +284,19 @@ struct AgentPanelView: View {
 
     @ViewBuilder
     private var missingKeyState: some View {
-        let account = AccountService.shared
         VStack(spacing: AppTheme.Spacing.mdLg) {
             Button {
-                missingKeyPrimaryAction(account: account)
+                SettingsWindowController.shared.show(tab: .agent)
             } label: {
-                Label(missingKeyPrimaryLabel(account: account), systemImage: missingKeyPrimaryIcon(account: account))
+                Label("Add Agent API Key", systemImage: "key.horizontal")
                     .font(.system(size: AppTheme.FontSize.mdLg, weight: .semibold))
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
 
-            if !account.isSignedIn {
-                Text("First-time sign-ups only")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-            }
-
-            Button(action: { SettingsWindowController.shared.show(tab: .agent) }) {
-                Text("or use your own Anthropic key")
-                    .underline()
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .padding(.horizontal, AppTheme.Spacing.sm)
-                    .padding(.vertical, AppTheme.Spacing.xxs)
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: AppTheme.FontSize.smMd, weight: .medium))
-            .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-        }
-    }
-
-    private func missingKeyPrimaryLabel(account: AccountService) -> LocalizedStringKey {
-        if !account.isSignedIn { return "Log in for 250 free credits" }
-        if !account.isPaid { return "Subscribe" }
-        return "Open Settings"
-    }
-
-    private func missingKeyPrimaryIcon(account: AccountService) -> String {
-        if !account.isSignedIn { return "gift.fill" }
-        if !account.isPaid { return "sparkles" }
-        return "gearshape"
-    }
-
-    private func missingKeyPrimaryAction(account: AccountService) {
-        if !account.isSignedIn {
-            Task { await account.signInWithGoogle() }
-        } else {
-            SettingsWindowController.shared.show(tab: .account)
+            Text("AI Chat is BYOK. Configure Anthropic or DeepSeek in Settings.")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+                .multilineTextAlignment(.center)
         }
     }
 

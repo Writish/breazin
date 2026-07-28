@@ -31,8 +31,6 @@ struct UpscaleModelConfig: Identifiable, Sendable {
 
     var id: String { entry.id }
     var displayName: String { entry.displayName }
-    var paidOnly: Bool { entry.paidOnly }
-    var creditsPerSecond: Double { entry.creditsPerSecondUpscale ?? 0 }
 
     var speed: String { caps.speed }
     var p75DurationSeconds: Int { caps.p75DurationSeconds }

@@ -10,8 +10,6 @@ extension EditSubmitter {
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String? {
-        guard AccountService.shared.isSignedIn else { return nil }
-
         let effectiveDuration = effectiveDuration(for: asset, trimmedSource: trimmedSource)
         let genInput = GenerationInput(
             prompt: "",

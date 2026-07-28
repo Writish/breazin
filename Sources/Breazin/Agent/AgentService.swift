@@ -1,6 +1,11 @@
 import Foundation
 import Observation
 
+struct AgentStreamError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 @Observable
 @MainActor
 final class AgentService {
@@ -48,17 +53,9 @@ final class AgentService {
         }
     }
 
-    var canStream: Bool {
-        if hasApiKey { return true }
-        guard provider == .anthropic else { return false }
-        let account = AccountService.shared
-        return account.isSignedIn && account.hasCredits
-    }
+    var canStream: Bool { hasApiKey }
 
-    var availableModels: [AgentModel] {
-        if hasApiKey { return provider.models }
-        return [.sonnet5]
-    }
+    var availableModels: [AgentModel] { provider.models }
 
     private func selectClient() -> (any AgentProvider)? {
         let chosen = effectiveModel
@@ -67,9 +64,6 @@ final class AgentService {
             case .anthropic: return AnthropicClient(apiKey: selectedAPIKey, model: chosen)
             case .deepSeek: return DeepSeekClient(apiKey: selectedAPIKey, model: chosen)
             }
-        }
-        if provider == .anthropic, AccountService.shared.isSignedIn {
-            return LegacyBackendClient(model: chosen)
         }
         return nil
     }
@@ -96,7 +90,7 @@ final class AgentService {
     var currentSessionId: UUID?
     var messages: [AgentMessage] = []
     var isStreaming: Bool = false
-    var streamError: LegacyBackendClientError?
+    var streamError: AgentStreamError?
     var onSessionsChanged: (@MainActor () -> Void)?
 
     var draft: String = ""
@@ -252,7 +246,6 @@ final class AgentService {
         draft = ""
         mentions.removeAll()
         streamError = nil
-        toolExecutor?.resetFeedbackState()
     }
 
     func newChat() {
@@ -268,7 +261,6 @@ final class AgentService {
         currentSessionId = session.id
         messages = []
         streamError = nil
-        toolExecutor?.resetFeedbackState()
         onSessionsChanged?()
     }
 
@@ -316,7 +308,9 @@ final class AgentService {
 
     func send(text: String, mentions: [AgentMention]) {
         guard canStream else {
-            streamError = .upstream("Add a \(provider.displayName) API key in Settings > Agent to start.")
+        streamError = AgentStreamError(
+            message: "Add a \(provider.displayName) API key in Settings > Agent to start."
+        )
             return
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -372,7 +366,7 @@ final class AgentService {
 
     private func runLoop() async {
         guard let client = selectClient() else {
-            streamError = .upstream("No backend available.")
+            streamError = AgentStreamError(message: "No Agent provider API key is configured.")
             return
         }
         await SkillStore.shared.reloadInBackground()
@@ -416,13 +410,9 @@ final class AgentService {
             } catch is CancellationError {
                 dropEmptyAssistantTurn(id: assistantID)
                 break loop
-            } catch let err as LegacyBackendClientError {
-                dropEmptyAssistantTurn(id: assistantID)
-                streamError = err
-                break loop
             } catch {
                 dropEmptyAssistantTurn(id: assistantID)
-                streamError = .upstream(error.localizedDescription)
+                streamError = AgentStreamError(message: error.localizedDescription)
                 break loop
             }
         }

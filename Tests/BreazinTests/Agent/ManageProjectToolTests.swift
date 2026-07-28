@@ -14,6 +14,9 @@ struct ManageProjectToolTests {
         #expect(!names.contains("open_project"))
         #expect(!names.contains("new_project"))
         #expect(!names.contains("close_project"))
+        #expect(!names.contains("generate_audio"))
+        #expect(!names.contains("upscale_media"))
+        #expect(!names.contains("send_feedback"))
 
         let tool = try #require(ToolDefinitions.mcpServer.first { $0.name == .manageProject })
         let properties = try #require(tool.inputSchema["properties"] as? [String: [String: Any]])

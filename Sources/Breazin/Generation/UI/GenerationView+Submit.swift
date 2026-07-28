@@ -4,7 +4,6 @@ import SwiftUI
 extension GenerationView {
 
     var canSubmit: Bool {
-        guard canAffordGeneration else { return false }
         if selectedType == .video && videoModel.requiresSourceVideo {
             guard sourceVideo != nil else { return false }
             if videoModel.requiresReferenceImage && imageReferences.isEmpty { return false }
@@ -27,84 +26,24 @@ extension GenerationView {
         return !isPromptEmpty
     }
 
-    /// Live credit estimate for the current form state.
-    private var estimatedCost: Int? {
-        switch selectedType {
-        case .video:
-            return CostEstimator.videoCost(
-                model: videoModel,
-                durationSeconds: effectiveVideoSeconds,
-                resolution: effectiveResolution,
-                generateAudio: effectiveGenerateAudio
-            )
-        case .image:
-            let quality = imageModel.qualities != nil ? selectedQuality : nil
-            return CostEstimator.imageCost(
-                model: imageModel,
-                resolution: effectiveResolution,
-                quality: quality,
-                numImages: selectedNumImages
-            )
-        case .audio:
-            let duration: Int? = audioModel.acceptsSourceMedia
-                ? (audioSource == nil ? nil : effectiveAudioSourceSeconds)
-                : (audioModel.durations != nil ? selectedAudioDuration : nil)
-            return CostEstimator.audioCost(
-                model: audioModel, prompt: trimmedPrompt, durationSeconds: duration
-            )
-        }
-    }
-
-    private var remainingCredits: Int? {
-        guard let budget = AccountService.shared.budgetCredits else { return nil }
-        return max(0, budget - AccountService.shared.spentCredits)
-    }
-
-    private var hasInsufficientCredits: Bool {
-        guard let cost = estimatedCost, let left = remainingCredits else { return false }
-        return cost > left
-    }
-
-    private var canAffordGeneration: Bool {
-        if usesDirectProvider { return true }
-        guard let left = remainingCredits else { return true }
-        if let cost = estimatedCost { return cost <= left }
-        return left > 0
-    }
-
-    private var costHelpText: String {
-        guard let cost = estimatedCost else {
-            return "Estimated cost. Actual billing may differ slightly."
-        }
-        guard let left = remainingCredits else {
-            return "\(cost) credits estimated. Actual billing may differ."
-        }
-        if cost > left {
-            return "\(cost) credits needed. Only \(left.formatted()) remaining."
-        }
-        return "\(cost) credits. \((left - cost).formatted()) credits remaining after this generation."
-    }
-
     var costEstimateLabel: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            Image(systemName: usesDirectProvider ? "key.horizontal.fill" : "dollarsign.circle.fill")
+            Image(systemName: "key.horizontal.fill")
                 .font(.system(size: AppTheme.FontSize.sm))
-            Text(usesDirectProvider ? "BYOK" : (estimatedCost.map { $0.formatted() } ?? "—"))
+            Text("BYOK")
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                .monospacedDigit()
                 .lineLimit(1)
         }
-        .foregroundStyle(hasInsufficientCredits ? .red : AppTheme.Text.secondaryColor)
-        .help(usesDirectProvider ? "Billed directly by the configured provider." : costHelpText)
+        .foregroundStyle(AppTheme.Text.secondaryColor)
+        .help("Billed directly by the configured provider.")
     }
 
     var submitButton: some View {
         Button {
             if aiAllowed { submitGeneration() }
-            else if usesDirectProvider { SettingsWindowController.shared.show(tab: .providers) }
-            else if !account.isMisconfigured { Task { await account.signInWithGoogle() } }
+            else { SettingsWindowController.shared.show(tab: .providers) }
         } label: {
-            Image(systemName: aiAllowed ? "arrow.up" : (usesDirectProvider ? "key.horizontal" : "person.crop.circle"))
+            Image(systemName: aiAllowed ? "arrow.up" : "key.horizontal")
                 .font(.system(size: AppTheme.FontSize.sm, weight: .bold))
                 .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
         }
@@ -112,9 +51,9 @@ extension GenerationView {
         .buttonBorderShape(.circle)
         .controlSize(.regular)
         .tint(AppTheme.Accent.primary)
-        .disabled(aiAllowed ? !canSubmit : (!usesDirectProvider && (account.isMisconfigured || account.isSigningIn)))
-        .opacity((aiAllowed ? canSubmit : usesDirectProvider || (!account.isMisconfigured && !account.isSigningIn)) ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
-        .help(aiAllowed ? "" : (usesDirectProvider ? "Add an API key in Settings > Providers" : (account.isMisconfigured ? "AI is unavailable" : account.isSigningIn ? "Opening Google" : "Sign in to generate")))
+        .disabled(aiAllowed && !canSubmit)
+        .opacity((aiAllowed ? canSubmit : true) ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
+        .help(aiAllowed ? "" : "Add an API key in Settings > Providers")
     }
 
     // MARK: - Actions
@@ -192,10 +131,6 @@ extension GenerationView {
     }
 
     private func submitGeneration() {
-        if currentModelLocked {
-            SettingsWindowController.shared.show(tab: .account)
-            return
-        }
         let audioDuration: Int = {
             guard selectedType == .audio else { return 0 }
             if audioModel.acceptsSourceMedia { return effectiveAudioSourceSeconds }

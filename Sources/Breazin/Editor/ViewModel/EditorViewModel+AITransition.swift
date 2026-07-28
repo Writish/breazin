@@ -25,7 +25,9 @@ extension EditorViewModel {
         guard seconds <= Self.maxTransitionSeconds else {
             return (nil, "Transitions are limited to \(Int(Self.maxTransitionSeconds)) seconds. This gap is \(String(format: "%.1f", seconds)) seconds.")
         }
-        guard aiEditAllowed else { return (nil, "Sign in to generate.") }
+        guard aiEditAllowed else {
+            return (nil, "Add a supported provider API key in Settings > Providers.")
+        }
         let model = VideoModelConfig.allModels.first { !$0.requiresSourceVideo && $0.supportsFirstFrame && $0.supportsLastFrame }
         return (model, model == nil ? "No video model supports first and last frames." : nil)
     }

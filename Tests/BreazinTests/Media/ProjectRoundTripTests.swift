@@ -304,28 +304,30 @@ struct ProjectRoundTripTests {
     @Test func generationLogSurvivesRoundTrip() throws {
         var log = GenerationLog()
         log.entries = [
-            GenerationLogEntry(model: "veo3.1-fast", costCredits: 100, createdAt: Date(timeIntervalSince1970: 1_700_000_000)),
-            GenerationLogEntry(model: "nano-banana-pro", costCredits: nil, createdAt: nil),
+            GenerationLogEntry(model: "veo3.1-fast", createdAt: Date(timeIntervalSince1970: 1_700_000_000)),
+            GenerationLogEntry(model: "nano-banana-pro", createdAt: nil),
         ]
         #expect(try roundTrip(log) == log)
     }
 
-    @Test func generationLogEntryMigratesLegacyCostDollarsToCredits() throws {
-        // Legacy entries stored `cost` as dollars (Double). New entries use `costCredits` (Int).
-        // Conversion: credits = ceil(dollars * 100).
+    @Test func generationLogEntryIgnoresLegacyCostFields() throws {
         let json = """
-        { "id": "abc", "model": "test-model", "cost": 0.05 }
+        { "id": "abc", "model": "test-model", "cost": 0.05, "costCredits": 5 }
         """
         let entry = try JSONDecoder().decode(GenerationLogEntry.self, from: Data(json.utf8))
-        #expect(entry.costCredits == 5) // 0.05 × 100 = 5
+        #expect(entry.id == "abc")
+        #expect(entry.model == "test-model")
+
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any]
+        #expect(encoded?["cost"] == nil)
+        #expect(encoded?["costCredits"] == nil)
     }
 
-    @Test func generationLogEntryWithNeitherCostFieldDecodesToNil() throws {
+    @Test func generationLogEntryWithoutDateDecodes() throws {
         let json = """
         { "id": "abc", "model": "test-model" }
         """
         let entry = try JSONDecoder().decode(GenerationLogEntry.self, from: Data(json.utf8))
-        #expect(entry.costCredits == nil)
         #expect(entry.createdAt == nil)
     }
 }

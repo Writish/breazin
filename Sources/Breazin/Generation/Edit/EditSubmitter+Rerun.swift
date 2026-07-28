@@ -6,7 +6,7 @@ extension EditSubmitter {
         case unknownModel(String)
         case missingSource
         case invalid(String)
-        case unauthorized
+        case missingCredential
 
         var errorDescription: String? {
             switch self {
@@ -14,7 +14,7 @@ extension EditSubmitter {
             case .unknownModel(let id): "Model no longer available: \(id)"
             case .missingSource: "Cannot rerun: source not recorded"
             case .invalid(let msg): msg
-            case .unauthorized: "Subscribe to Breazin to rerun generations"
+            case .missingCredential: "Add the model provider API key in Settings > Providers"
             }
         }
     }
@@ -26,10 +26,10 @@ extension EditSubmitter {
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) throws -> String {
-        guard AccountService.shared.isSignedIn else {
-            throw RerunError.unauthorized
-        }
         guard let stored = asset.generationInput else { throw RerunError.notGenerated }
+        guard ProviderModelCatalog.isConfigured(for: stored.model) else {
+            throw RerunError.missingCredential
+        }
         var gen = stored
         gen.createdAt = nil
         let modelId = gen.model
