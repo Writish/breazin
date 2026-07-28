@@ -89,4 +89,19 @@ struct ProviderContractsTests {
         #expect(resolution.message == "Try later.")
         #expect(resolution.shouldCleanupReferences)
     }
+
+    @Test func recoveryBackoffIsExponentialJitteredAndCapped() {
+        let policy = GenerationRetryPolicy(
+            baseDelay: 10,
+            maximumDelay: 100,
+            jitterRatio: 0.2,
+            offlinePollInterval: 5
+        )
+
+        #expect(policy.delay(retryCount: 0, jitterUnit: 0) == 8)
+        #expect(policy.delay(retryCount: 0, jitterUnit: 0.5) == 10)
+        #expect(policy.delay(retryCount: 0, jitterUnit: 1) == 12)
+        #expect(policy.delay(retryCount: 1, jitterUnit: 0.5) == 20)
+        #expect(policy.delay(retryCount: 10, jitterUnit: 1) == 100)
+    }
 }

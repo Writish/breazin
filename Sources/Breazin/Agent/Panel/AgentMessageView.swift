@@ -237,7 +237,9 @@ private struct GenerationJobInlineStatus: View {
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            if job?.state.isActivelyProcessing == true {
+            if job?.state.isActivelyProcessing == true,
+               job?.isOfflinePaused != true,
+               job?.isRetryScheduled != true {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: statusIcon)
@@ -252,6 +254,8 @@ private struct GenerationJobInlineStatus: View {
 
     private var statusLabel: String {
         guard let job else { return "Preparing" }
+        if job.isOfflinePaused { return "Paused offline" }
+        if job.isRetryScheduled { return "Retry scheduled" }
         return switch job.state {
         case .preparing: "Preparing"
         case .submitting: job.kind == .image ? "Waiting for provider" : "Submitting"
@@ -267,7 +271,9 @@ private struct GenerationJobInlineStatus: View {
     }
 
     private var statusIcon: String {
-        switch job?.state {
+        if job?.isOfflinePaused == true { return "wifi.slash" }
+        if job?.isRetryScheduled == true { return "clock.arrow.circlepath" }
+        return switch job?.state {
         case .succeeded: "checkmark.circle.fill"
         case .failed, .cancelled, .needsAttention: "xmark.circle.fill"
         default: "circle.dotted"
@@ -275,7 +281,10 @@ private struct GenerationJobInlineStatus: View {
     }
 
     private var statusColor: Color {
-        switch job?.state {
+        if job?.isOfflinePaused == true || job?.isRetryScheduled == true {
+            return .orange.opacity(AppTheme.Opacity.prominent)
+        }
+        return switch job?.state {
         case .succeeded: .green.opacity(AppTheme.Opacity.prominent)
         case .failed, .cancelled, .needsAttention: .red.opacity(AppTheme.Opacity.prominent)
         default: AppTheme.Text.tertiaryColor
@@ -304,6 +313,12 @@ private struct GenerationJobDetailView: View {
                         detail("Task", value: providerJobID)
                     }
                     detail("Status", value: job.state.rawValue)
+                    if job.retryCount > 0 {
+                        detail("Recovery retries", value: String(job.retryCount))
+                    }
+                    if let nextRetryAt = job.nextRetryAt {
+                        detail("Next retry", value: nextRetryAt.formatted())
+                    }
                     if let providerUpdatedAt = job.providerDetails?.providerUpdatedAt {
                         detail("Provider updated", value: providerUpdatedAt.formatted())
                     }

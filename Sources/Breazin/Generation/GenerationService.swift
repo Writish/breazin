@@ -23,6 +23,7 @@ final class GenerationService {
     private var resumedProviderJobIds: Set<String> = []
     private var activeTasks: [String: Task<Void, Never>] = [:]
     private let jobStore = GenerationJobStore.shared
+    private let retryPolicy = GenerationRetryPolicy.default
 
     private struct PreparedReferences {
         let uploaded: [String]
@@ -708,7 +709,8 @@ final class GenerationService {
                     to: GenerationJobState(providerState: job.state),
                     providerJobID: job.providerJobID,
                     resultURLs: job.resultURLs.map(\.absoluteString),
-                    errorCode: job.errorCode
+                    errorCode: job.errorCode,
+                    resetRetryCount: job.state != .succeeded
                 )
             }
             for placeholder in placeholders {
@@ -724,13 +726,24 @@ final class GenerationService {
             }
             editor.onProjectCheckpointRequired?()
             if job.state == .succeeded {
-                await finalizeSuccess(
-                    urlStrings: job.resultURLs.map(\.absoluteString),
+                let finished = await stageAndFinalizeProviderSuccess(
+                    providerJobID: job.providerJobID,
+                    resultURLs: job.resultURLs.map(\.absoluteString),
                     placeholders: placeholders,
                     editor: editor,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
+                if !finished {
+                    await monitorProviderJob(
+                        provider: provider,
+                        providerJobID: job.providerJobID,
+                        placeholders: placeholders,
+                        editor: editor,
+                        onComplete: onComplete,
+                        onFailure: onFailure
+                    )
+                }
             } else if job.state == .failed || job.state == .cancelled {
                 await failProviderJob(job, placeholders: placeholders, editor: editor, onFailure: onFailure)
             } else {
@@ -778,16 +791,61 @@ final class GenerationService {
         onFailure: (@MainActor () -> Void)?
     ) async {
         while !Task.isCancelled {
+            let localJobID = placeholders.first?.generationInput?.localJobId
+            if let localJobID,
+               let localJob = try? await jobStore.job(id: localJobID) {
+                if localJob.cancelRequested {
+                    try? await provider.cancel(jobID: providerJobID)
+                    _ = try? await jobStore.transition(
+                        jobID: localJobID,
+                        to: .cancelled,
+                        providerJobID: providerJobID
+                    )
+                    for placeholder in placeholders {
+                        updateGenerationMetadata(
+                            placeholder,
+                            editor: editor,
+                            status: .failed("Generation cancelled")
+                        )
+                    }
+                    return
+                }
+                if let delay = retryPolicy.remainingDelay(
+                    nextRetryAt: localJob.nextRetryAt,
+                    now: Date()
+                ) {
+                    guard await sleepForProviderRetry(delay) else { return }
+                    continue
+                }
+                if !(await GenerationConnectivityMonitor.shared.isOnline()) {
+                    try? await jobStore.recordOfflinePause(jobID: localJobID)
+                    guard await sleepForProviderRetry(retryPolicy.offlinePollInterval) else { return }
+                    continue
+                }
+                if localJob.state == .downloading, !localJob.resultURLs.isEmpty {
+                    let finished = await stageAndFinalizeProviderSuccess(
+                        providerJobID: providerJobID,
+                        resultURLs: localJob.resultURLs,
+                        placeholders: placeholders,
+                        editor: editor,
+                        onComplete: onComplete,
+                        onFailure: onFailure
+                    )
+                    if finished { return }
+                    continue
+                }
+            }
             do {
                 let job = try await provider.status(jobID: providerJobID)
-                if let localJobID = placeholders.first?.generationInput?.localJobId {
+                if let localJobID {
                     try await jobStore.recordProviderDetails(jobID: localJobID, details: job.details)
                     _ = try await jobStore.transition(
                         jobID: localJobID,
                         to: GenerationJobState(providerState: job.state),
                         providerJobID: providerJobID,
                         resultURLs: job.resultURLs.map(\.absoluteString),
-                        errorCode: job.errorCode
+                        errorCode: job.errorCode,
+                        resetRetryCount: job.state != .succeeded
                     )
                     if try await jobStore.job(id: localJobID)?.cancelRequested == true {
                         try? await provider.cancel(jobID: providerJobID)
@@ -817,14 +875,15 @@ final class GenerationService {
                         }
                     }
                     editor.onProjectCheckpointRequired?()
-                    await finalizeSuccess(
-                        urlStrings: job.resultURLs.map(\.absoluteString),
+                    let finished = await stageAndFinalizeProviderSuccess(
+                        providerJobID: providerJobID,
+                        resultURLs: job.resultURLs.map(\.absoluteString),
                         placeholders: placeholders,
                         editor: editor,
                         onComplete: onComplete,
                         onFailure: onFailure
                     )
-                    return
+                    if finished { return }
                 case .failed, .cancelled:
                     await failProviderJob(job, placeholders: placeholders, editor: editor, onFailure: onFailure)
                     return
@@ -835,8 +894,151 @@ final class GenerationService {
             } catch is CancellationError {
                 return
             } catch {
-                Log.generation.warning("direct provider status check failed; retrying")
-                try? await Task.sleep(for: .seconds(5))
+                guard let localJobID else {
+                    Log.generation.warning("direct provider status check failed; retrying")
+                    guard await sleepForProviderRetry(retryPolicy.baseDelay) else { return }
+                    continue
+                }
+                switch await scheduleProviderRetry(jobID: localJobID, error: error) {
+                case .retry(let delay):
+                    guard await sleepForProviderRetry(delay) else { return }
+                case .stop(let message):
+                    for placeholder in placeholders {
+                        updateGenerationMetadata(placeholder, editor: editor, status: .failed(message))
+                    }
+                    editor.onProjectCheckpointRequired?()
+                    onFailure?()
+                    return
+                }
+            }
+        }
+    }
+
+    private enum ProviderRetryDisposition {
+        case retry(TimeInterval)
+        case stop(String)
+    }
+
+    private func scheduleProviderRetry(
+        jobID: String,
+        error: any Error,
+        clearResultURLs: Bool = false
+    ) async -> ProviderRetryDisposition {
+        if retryPolicy.isPermanent(error) {
+            let message = error.localizedDescription
+            _ = try? await jobStore.transition(
+                jobID: jobID,
+                to: .needsAttention,
+                errorCode: "recovery_provider_unavailable",
+                errorMessage: message
+            )
+            return .stop(message)
+        }
+        do {
+            guard let job = try await jobStore.job(id: jobID) else {
+                return .stop("Generation recovery metadata is unavailable.")
+            }
+            let now = Date()
+            let retryDate = retryPolicy.retryDate(
+                retryCount: job.retryCount,
+                now: now,
+                jitterUnit: Double.random(in: 0...1)
+            )
+            try await jobStore.scheduleRetry(
+                jobID: jobID,
+                at: retryDate,
+                message: error.localizedDescription,
+                clearResultURLs: clearResultURLs
+            )
+            Log.generation.warning("direct provider recovery deferred after transient failure")
+            return .retry(max(0, retryDate.timeIntervalSince(now)))
+        } catch {
+            Log.generation.error("direct provider recovery could not persist retry schedule")
+            return .stop("Generation recovery could not save its retry schedule.")
+        }
+    }
+
+    private func sleepForProviderRetry(_ delay: TimeInterval) async -> Bool {
+        do {
+            try await Task.sleep(
+                for: .seconds(min(max(0, delay), retryPolicy.offlinePollInterval))
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func stageAndFinalizeProviderSuccess(
+        providerJobID: String,
+        resultURLs: [String],
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async -> Bool {
+        guard let localJobID = placeholders.first?.generationInput?.localJobId else {
+            await finalizeSuccess(
+                urlStrings: resultURLs,
+                placeholders: placeholders,
+                editor: editor,
+                onComplete: onComplete,
+                onFailure: onFailure
+            )
+            return true
+        }
+        do {
+            let kind = placeholders.first.map { Self.providerKind(for: $0.type) } ?? .image
+            _ = try await jobStore.transition(
+                jobID: localJobID,
+                to: .downloading,
+                providerJobID: providerJobID,
+                resultURLs: resultURLs,
+                resetRetryCount: false
+            )
+            let relativePaths = try await GenerationOutputStager.stage(
+                jobID: localJobID,
+                kind: kind,
+                resultURLs: resultURLs
+            )
+            let staged = try await jobStore.transition(
+                jobID: localJobID,
+                to: .finalizing,
+                providerJobID: providerJobID,
+                resultURLs: resultURLs,
+                stagedOutputRelativePaths: relativePaths
+            )
+            if staged?.state == .cancelled {
+                await cleanupTemporaryReferences(jobID: localJobID)
+                return true
+            }
+            await finalizeStagedSuccess(
+                relativePaths: relativePaths,
+                urlStrings: resultURLs,
+                placeholders: placeholders,
+                editor: editor,
+                onComplete: onComplete,
+                onFailure: onFailure
+            )
+            return true
+        } catch is CancellationError {
+            return true
+        } catch {
+            let kind = placeholders.first.map { Self.providerKind(for: $0.type) } ?? .image
+            switch await scheduleProviderRetry(
+                jobID: localJobID,
+                error: error,
+                clearResultURLs: kind != .image
+            ) {
+            case .retry:
+                return false
+            case .stop(let message):
+                for placeholder in placeholders {
+                    updateGenerationMetadata(placeholder, editor: editor, status: .failed(message))
+                }
+                editor.onProjectCheckpointRequired?()
+                onFailure?()
+                return true
             }
         }
     }

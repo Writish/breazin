@@ -7,6 +7,7 @@ Recorded 2026-07-23 and updated 2026-07-28. This record separates deterministic 
 | Scope | Result | Evidence |
 | --- | --- | --- |
 | Global SQLite recovery | Passed locally | Automated coverage for crash restart, duplicate recovery, unopened project, `queued`/`running`/`downloading`, missing provider task ID, cancellation without a remote task, and cancellation/completion races. Recovery contains no provider submit path. |
+| Offline and transient-failure scheduling | Passed locally | Both recovery paths pause provider calls while `NWPathMonitor` reports offline, persist `network_offline`, `retry_count`, and `next_retry_at` in SQLite schema v4, and resume with 2-second-base exponential backoff, ±20% jitter, and a five-minute cap. The loop rechecks cancellation at least every five seconds. Deterministic clocks and jitter cover early duplicate recovery, due retries, permanent errors, offline recovery, and cancellation preemption. |
 | Provider output staging | Passed locally | Generated URLs are downloaded to app support, persisted as job-relative paths, rejected on path traversal, transferred to the project when opened, and cleaned after terminal handling. |
 | Reference normalization and binding | Passed locally | Image streaming checksum, MP4/H.264 normalization, M4A/AAC normalization, Broker reserve/upload/complete/refresh/delete, and SQLite Job/upload binding are automated. |
 | Volcengine request contracts | Passed locally | Seedream synchronous image and Seedance asynchronous video request mapping, content roles, polling states, cancellation, expiry, and safe remote errors are automated against fixtures. |
@@ -18,6 +19,11 @@ Recorded 2026-07-23 and updated 2026-07-28. This record separates deterministic 
 | Seedance paid generation | Passed once in Beta | On 2026-07-23 the operator completed one Seedance 2.0 image-reference video generation. SQLite recorded a provider task ID, one result URL, terminal `succeeded`, and deleted reference-upload state, which implies submit → status polling → download/project finalization → cleanup completed. This is one operator-observed flow, not a latency or reliability benchmark. |
 | Seedream paid generation | Passed once in Beta | On 2026-07-25 the operator completed a Seedream 5.0 Pro image generation after the timeout fix. SQLite recorded one attempt, a provider task ID, one result, 4,450 output/total Tokens, terminal `succeeded`, and deleted reference-upload state. The end-to-end local duration was about 129 seconds. |
 | Crash recovery with accepted provider task | Passed once in Beta; unopened-project staging remains local-contract evidence | On 2026-07-28 a Seedance job was created, the app exited while it was active, and a new process launched 31 seconds later. The job later reached `succeeded` with one attempt, the original provider task ID, one result, 108,900 total Tokens, and deleted upload state. This verifies restart recovery without resubmission and project finalization. The project was opened before the local terminal write, so this run does not independently prove output staging completed while no project was open. |
+
+Strict Phase 2 is closed by the local implementation and deterministic
+acceptance above. The partially verified Cloudflare exercises and future paid
+drills remain explicitly scoped as additional production evidence rather than
+being promoted to live proof.
 
 ## Operator-observed Beta timeline
 
@@ -79,6 +85,27 @@ swift test --skip-build
 ```
 
 This run passed 1,186 tests in 183 suites.
+
+The offline and retry-scheduling closure ran:
+
+```bash
+swift test --filter 'GenerationRecoveryCoordinatorTests|GenerationJobStoreTests|ProviderContractsTests|ToolExecutorTests'
+```
+
+This selected run passed 150 tests in 9 suites. During hardening of output download
+retries so that Seedance refreshes stale provider URLs while synchronous
+Seedream retains its only result URL, the focused recovery/store/provider run
+passed 28 tests in 3 suites.
+
+The final unfiltered regression was then repeated:
+
+```bash
+CLANG_MODULE_CACHE_PATH=/private/tmp/breazin-clang-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/breazin-swiftpm-module-cache \
+swift test --skip-build
+```
+
+This run passed 1,192 tests in 183 suites.
 
 A replacement staging smoke bundle containing the timeout fix was assembled at
 `/private/tmp/breazin-beta-timeout/Breazin.app` with bundled speech disabled and

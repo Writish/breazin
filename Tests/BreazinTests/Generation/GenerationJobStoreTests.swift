@@ -171,6 +171,8 @@ struct GenerationJobStoreTests {
         #expect(migrated.id == job.id)
         #expect(migrated.stagedOutputRelativePaths.isEmpty)
         #expect(migrated.providerDetails == nil)
+        #expect(migrated.retryCount == 0)
+        #expect(migrated.nextRetryAt == nil)
     }
 
     private func makeStore() -> GenerationJobStore {

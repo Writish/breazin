@@ -93,6 +93,49 @@ actor GenerationJobStore {
         }
     }
 
+    func recordOfflinePause(jobID: String) throws {
+        try openIfNeeded()
+        try execute(
+            """
+            UPDATE generation_jobs SET
+                error_code = 'network_offline',
+                error_message = 'Generation recovery is paused until the network is available.',
+                updated_at = ?
+            WHERE id = ? AND state NOT IN ('succeeded', 'failed', 'cancelled')
+              AND error_code IS NOT 'network_offline'
+            """,
+            [.double(Date().timeIntervalSince1970), .text(jobID)]
+        )
+    }
+
+    func scheduleRetry(
+        jobID: String,
+        at retryDate: Date,
+        message: String,
+        clearResultURLs: Bool = false
+    ) throws {
+        try openIfNeeded()
+        try execute(
+            """
+            UPDATE generation_jobs SET
+                retry_count = retry_count + 1,
+                next_retry_at = ?,
+                result_urls = CASE WHEN ? = 1 THEN '[]' ELSE result_urls END,
+                error_code = 'recovery_retry_scheduled',
+                error_message = ?,
+                updated_at = ?
+            WHERE id = ? AND state NOT IN ('succeeded', 'failed', 'cancelled')
+            """,
+            [
+                .double(retryDate.timeIntervalSince1970),
+                .int(clearResultURLs ? 1 : 0),
+                .text(message),
+                .double(Date().timeIntervalSince1970),
+                .text(jobID),
+            ]
+        )
+    }
+
     @discardableResult
     func transition(
         jobID: String,
@@ -103,7 +146,8 @@ actor GenerationJobStore {
         errorCode: String? = nil,
         errorMessage: String? = nil,
         nextRetryAt: Date? = nil,
-        incrementAttempt: Bool = false
+        incrementAttempt: Bool = false,
+        resetRetryCount: Bool = true
     ) throws -> GenerationJobRecord? {
         try transaction {
             guard let current = try job(id: jobID), !current.state.isTerminal else { return try job(id: jobID) }
@@ -122,6 +166,7 @@ actor GenerationJobStore {
                     error_code = ?,
                     error_message = ?,
                     next_retry_at = ?,
+                    retry_count = CASE WHEN ? = 1 THEN 0 ELSE retry_count END,
                     attempt_count = attempt_count + ?,
                     updated_at = ?
                 WHERE id = ? AND state NOT IN ('succeeded', 'failed', 'cancelled')
@@ -131,7 +176,8 @@ actor GenerationJobStore {
                  try stagedOutputRelativePaths.map { .text(try json($0)) } ?? .null,
                  errorCode.map(Binding.text) ?? .null, errorMessage.map(Binding.text) ?? .null,
                  nextRetryAt.map { .double($0.timeIntervalSince1970) } ?? .null,
-                 .int(incrementAttempt ? 1 : 0), .double(Date().timeIntervalSince1970), .text(jobID)]
+                 .int(resetRetryCount ? 1 : 0), .int(incrementAttempt ? 1 : 0),
+                 .double(Date().timeIntervalSince1970), .text(jobID)]
             )
             return try job(id: jobID)
         }
@@ -279,6 +325,7 @@ actor GenerationJobStore {
                 request_hash TEXT NOT NULL,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 attempt_count INTEGER NOT NULL DEFAULT 0,
+                retry_count INTEGER NOT NULL DEFAULT 0,
                 next_retry_at REAL,
                 result_urls TEXT NOT NULL DEFAULT '[]',
                 staged_output_relative_paths TEXT NOT NULL DEFAULT '[]',
@@ -323,9 +370,15 @@ actor GenerationJobStore {
         if try !hasColumn("provider_details", in: "generation_jobs") {
             try execute("ALTER TABLE generation_jobs ADD COLUMN provider_details TEXT")
         }
+        if try !hasColumn("retry_count", in: "generation_jobs") {
+            try execute(
+                "ALTER TABLE generation_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
+            )
+        }
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_jobs_state ON generation_jobs(state, updated_at)")
+        try execute("CREATE INDEX IF NOT EXISTS idx_generation_jobs_retry ON generation_jobs(next_retry_at)")
         try execute("CREATE INDEX IF NOT EXISTS idx_generation_uploads_job ON generation_uploads(job_id, ordinal)")
-        try execute("PRAGMA user_version = 3")
+        try execute("PRAGMA user_version = 4")
     }
 
     private func hasStagedOutputColumn() throws -> Bool {
@@ -370,6 +423,7 @@ actor GenerationJobStore {
             idempotencyKey: idempotencyKey, providerJobID: string(statement, "provider_job_id"),
             requestHash: requestHash, cancelRequested: integer(statement, "cancel_requested") != 0,
             attemptCount: Int(integer(statement, "attempt_count")),
+            retryCount: Int(integer(statement, "retry_count")),
             nextRetryAt: date(statement, "next_retry_at"), resultURLs: try value([String].self, resultsJSON),
             stagedOutputRelativePaths: try value([String].self, stagedOutputsJSON),
             providerDetails: try string(statement, "provider_details").map {

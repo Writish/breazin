@@ -9,6 +9,8 @@ actor GenerationRecoveryCoordinator {
 
     enum RecoveryDisposition: Equatable, Sendable {
         case pollAgain
+        case waitingForNetwork
+        case waitingForRetry(TimeInterval)
         case waitingForProject
         case stopped
         case alreadyRecovering
@@ -17,6 +19,8 @@ actor GenerationRecoveryCoordinator {
     struct RecoverySummary: Equatable, Sendable {
         var scanned = 0
         var polling = 0
+        var waitingForNetwork = 0
+        var waitingForRetry = 0
         var waitingForProject = 0
         var stopped = 0
         var alreadyRecovering = 0
@@ -29,6 +33,9 @@ actor GenerationRecoveryCoordinator {
         [String]
     ) async throws -> [String]
     typealias Cleanup = @Sendable (String) async -> Void
+    typealias NetworkAvailable = @Sendable () async -> Bool
+    typealias Now = @Sendable () -> Date
+    typealias JitterUnit = @Sendable () -> Double
 
     private struct RecoveryTask {
         let token: UUID
@@ -40,6 +47,10 @@ actor GenerationRecoveryCoordinator {
     private let stageOutputs: StageOutputs
     private let cleanup: Cleanup
     private let pollInterval: Duration
+    private let retryPolicy: GenerationRetryPolicy
+    private let networkAvailable: NetworkAvailable
+    private let now: Now
+    private let jitterUnit: JitterUnit
     private var recoveryTasks: [String: RecoveryTask] = [:]
     private var inFlightJobIDs: Set<String> = []
     private var didStart = false
@@ -58,13 +69,23 @@ actor GenerationRecoveryCoordinator {
         cleanup: @escaping Cleanup = { jobID in
             await GenerationReferenceCleanup.run(jobID: jobID)
             await GenerationOutputStager.cleanup(jobID: jobID)
-        }
+        },
+        retryPolicy: GenerationRetryPolicy = .default,
+        networkAvailable: @escaping NetworkAvailable = {
+            GenerationConnectivityMonitor.shared.isOnline()
+        },
+        now: @escaping Now = { Date() },
+        jitterUnit: @escaping JitterUnit = { Double.random(in: 0...1) }
     ) {
         self.store = store
         self.pollInterval = pollInterval
         self.providerFactory = providerFactory
         self.stageOutputs = stageOutputs
         self.cleanup = cleanup
+        self.retryPolicy = retryPolicy
+        self.networkAvailable = networkAvailable
+        self.now = now
+        self.jitterUnit = jitterUnit
     }
 
     /// Starts app-lifetime reconciliation once. Repeated calls are idempotent.
@@ -89,6 +110,8 @@ actor GenerationRecoveryCoordinator {
         for job in jobs {
             switch await recoverOnce(jobID: job.id) {
             case .pollAgain: summary.polling += 1
+            case .waitingForNetwork: summary.waitingForNetwork += 1
+            case .waitingForRetry: summary.waitingForRetry += 1
             case .waitingForProject: summary.waitingForProject += 1
             case .stopped: summary.stopped += 1
             case .alreadyRecovering: summary.alreadyRecovering += 1
@@ -125,6 +148,10 @@ actor GenerationRecoveryCoordinator {
                 } catch {
                     return
                 }
+            case .waitingForNetwork:
+                guard await sleepForRetry(retryPolicy.offlinePollInterval) else { return }
+            case .waitingForRetry(let delay):
+                guard await sleepForRetry(min(delay, retryPolicy.offlinePollInterval)) else { return }
             case .alreadyRecovering:
                 await Task.yield()
             case .waitingForProject, .stopped:
@@ -189,8 +216,25 @@ actor GenerationRecoveryCoordinator {
                 return .waitingForProject
             }
 
+            if let delay = retryPolicy.remainingDelay(nextRetryAt: job.nextRetryAt, now: now()) {
+                return .waitingForRetry(delay)
+            }
+
+            guard await networkAvailable() else {
+                try await store.recordOfflinePause(jobID: job.id)
+                return .waitingForNetwork
+            }
+
             if job.state == .downloading, !job.resultURLs.isEmpty {
-                return try await stage(job)
+                do {
+                    return try await stage(job)
+                } catch {
+                    return await scheduleRetry(
+                        jobID: job.id,
+                        error: error,
+                        clearResultURLs: job.kind != .image
+                    )
+                }
             }
 
             let provider = try providerFactory(job.model)
@@ -202,7 +246,8 @@ actor GenerationRecoveryCoordinator {
                 providerJobID: providerJobID,
                 resultURLs: remote.resultURLs.map(\.absoluteString),
                 errorCode: remote.errorCode,
-                errorMessage: remote.details?.errorMessage
+                errorMessage: remote.details?.errorMessage,
+                resetRetryCount: remote.state != .succeeded
             )
 
             guard let updated else { return .stopped }
@@ -213,7 +258,15 @@ actor GenerationRecoveryCoordinator {
 
             switch remote.state {
             case .succeeded:
-                return try await stage(updated)
+                do {
+                    return try await stage(updated)
+                } catch {
+                    return await scheduleRetry(
+                        jobID: job.id,
+                        error: error,
+                        clearResultURLs: job.kind != .image
+                    )
+                }
             case .failed, .cancelled:
                 await cleanup(job.id)
                 return .stopped
@@ -224,23 +277,53 @@ actor GenerationRecoveryCoordinator {
             }
         } catch is CancellationError {
             return .stopped
-        } catch let error as ProviderGenerationError {
-            switch error {
-            case .missingCredential, .unsupportedModel:
-                _ = try? await store.transition(
-                    jobID: jobID,
-                    to: .needsAttention,
-                    errorCode: "recovery_provider_unavailable",
-                    errorMessage: error.localizedDescription
-                )
-                return .stopped
-            case .unsupportedInput, .invalidResponse, .remote:
-                Log.generation.warning("global generation recovery status check failed; will retry")
-                return .pollAgain
-            }
         } catch {
-            Log.generation.warning("global generation recovery status check failed; will retry")
-            return .pollAgain
+            return await scheduleRetry(jobID: jobID, error: error)
+        }
+    }
+
+    private func scheduleRetry(
+        jobID: String,
+        error: any Error,
+        clearResultURLs: Bool = false
+    ) async -> RecoveryDisposition {
+        if retryPolicy.isPermanent(error) {
+            _ = try? await store.transition(
+                jobID: jobID,
+                to: .needsAttention,
+                errorCode: "recovery_provider_unavailable",
+                errorMessage: error.localizedDescription
+            )
+            return .stopped
+        }
+        do {
+            guard let job = try await store.job(id: jobID),
+                  !job.state.isTerminal else { return .stopped }
+            let retryDate = retryPolicy.retryDate(
+                retryCount: job.retryCount,
+                now: now(),
+                jitterUnit: jitterUnit()
+            )
+            try await store.scheduleRetry(
+                jobID: jobID,
+                at: retryDate,
+                message: error.localizedDescription,
+                clearResultURLs: clearResultURLs
+            )
+            Log.generation.warning("global generation recovery deferred after transient failure")
+            return .waitingForRetry(max(0, retryDate.timeIntervalSince(now())))
+        } catch {
+            Log.generation.error("global generation recovery could not persist retry schedule")
+            return .stopped
+        }
+    }
+
+    private func sleepForRetry(_ seconds: TimeInterval) async -> Bool {
+        do {
+            try await Task.sleep(for: .seconds(max(0, seconds)))
+            return true
+        } catch {
+            return false
         }
     }
 

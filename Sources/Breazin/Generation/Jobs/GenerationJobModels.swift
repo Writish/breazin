@@ -51,6 +51,7 @@ struct GenerationJobRecord: Equatable, Sendable {
     let requestHash: String
     let cancelRequested: Bool
     let attemptCount: Int
+    let retryCount: Int
     let nextRetryAt: Date?
     let resultURLs: [String]
     let stagedOutputRelativePaths: [String]
@@ -66,6 +67,14 @@ struct GenerationJobRecord: Equatable, Sendable {
             && providerJobID == nil
             && errorCode == "provider_submission_ambiguous"
             && errorMessage?.localizedCaseInsensitiveContains("timed out") == true
+    }
+
+    var isOfflinePaused: Bool {
+        errorCode == "network_offline"
+    }
+
+    var isRetryScheduled: Bool {
+        errorCode == "recovery_retry_scheduled" && nextRetryAt != nil
     }
 }
 

@@ -62,7 +62,12 @@ extension ToolExecutor {
                 "updatedAt": job.updatedAt.ISO8601Format(),
                 "resultURLAvailable": !job.resultURLs.isEmpty,
                 "resultCount": job.resultURLs.count,
+                "submissionAttempts": job.attemptCount,
+                "recoveryRetries": job.retryCount,
             ]
+            if let nextRetryAt = job.nextRetryAt {
+                payload["nextRetryAt"] = nextRetryAt.ISO8601Format()
+            }
             if let providerJobID = job.providerJobID {
                 payload["providerTaskId"] = providerJobID
             }
@@ -145,6 +150,13 @@ extension ToolExecutor {
 
         for group in grouped.values {
             guard let first = group.first else { continue }
+            guard await GenerationConnectivityMonitor.shared.isOnline() else {
+                for job in group {
+                    try? await generationJobStore.recordOfflinePause(jobID: job.id)
+                    errors[job.id] = "network_offline"
+                }
+                continue
+            }
             do {
                 let provider = try ProviderModelCatalog.makeProvider(for: first.model)
                 let remoteJobs: [ProviderGenerationJob]
@@ -174,7 +186,8 @@ extension ToolExecutor {
                         providerJobID: providerJobID,
                         resultURLs: remote.resultURLs.map(\.absoluteString),
                         errorCode: remote.errorCode,
-                        errorMessage: remote.details?.errorMessage
+                        errorMessage: remote.details?.errorMessage,
+                        resetRetryCount: remote.state != .succeeded
                     )
                 }
             } catch let error as URLError where error.code == .timedOut {
