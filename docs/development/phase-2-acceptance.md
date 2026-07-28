@@ -1,6 +1,6 @@
 # Phase 2 acceptance record
 
-Recorded 2026-07-23 and updated 2026-07-24. This record separates deterministic local contracts, operator-observed Beta evidence, read-only checks against currently deployed Cloudflare resources, and production end-to-end work that still requires explicit credentials or paid-generation approval.
+Recorded 2026-07-23 and updated 2026-07-28. This record separates deterministic local contracts, operator-observed Beta evidence, read-only checks against currently deployed Cloudflare resources, and production end-to-end work that still requires explicit credentials or paid-generation approval.
 
 ## Acceptance matrix
 
@@ -11,13 +11,32 @@ Recorded 2026-07-23 and updated 2026-07-24. This record separates deterministic 
 | Reference normalization and binding | Passed locally | Image streaming checksum, MP4/H.264 normalization, M4A/AAC normalization, Broker reserve/upload/complete/refresh/delete, and SQLite Job/upload binding are automated. |
 | Volcengine request contracts | Passed locally | Seedream synchronous image and Seedance asynchronous video request mapping, content roles, polling states, cancellation, expiry, and safe remote errors are automated against fixtures. |
 | Provider status observability | Passed locally | Seedance single-task and multi-task status queries, provider timestamps, queued/running/succeeded/failed/cancelled mapping, output metadata, Token usage, SQLite v3 persistence, AI Chat status receipts, and native result links are automated. `needs_attention` is actionable but not actively processing, so it no longer renders an endless spinner. A task-status query timeout remains a transient refresh error. |
-| Seedream synchronous timeout | Passed locally; live retry pending | Beta evidence showed the former URLSession default ending the synchronous request after about 63 seconds without an HTTP response, task ID, result URL, or usage. Seedream now waits up to five minutes. If that response also times out, the local job becomes terminal `failed`, temporary references are cleaned, and the UI warns that Ark may still have processed the request because there is no task ID to query or cancel. Legacy matching `needs_attention` rows are closed on launch without resubmission. |
+| Seedream synchronous timeout | Passed locally and superseded by a successful live retry | Beta evidence showed the former URLSession default ending the synchronous request after about 63 seconds without an HTTP response, task ID, result URL, or usage. Seedream now waits up to five minutes. If that response also times out, the local job becomes terminal `failed`, temporary references are cleaned, and the UI warns that Ark may still have processed the request because there is no task ID to query or cancel. Legacy matching `needs_attention` rows are closed on launch without resubmission. |
 | Upload Broker handler contracts | Passed locally | Health, missing/wrong authentication, presigned URL generation, R2 object metadata/size validation, complete, refresh, delete, missing object, expired handle, tampered handle, and lifecycle JSON are automated. |
 | Cloudflare staging resources | Partially verified live | Wrangler authentication, three R2 buckets, staging deployment, required secret names, staging health `200`, unauthenticated upload `401`, and active `tmp/` two-day lifecycle rule were checked against the Cloudflare account. |
 | Authenticated staging client flow | Partially verified live | A Beta Seedance run reserved an upload, completed an authenticated presigned JPEG `PUT`, submitted the resulting reference, and deleted the bound upload after terminal success. The standalone acceptance harness, explicit byte read, URL refresh, and real-time expiry remain unverified; the local acceptance-only Worker revision remains undeployed. |
 | Seedance paid generation | Passed once in Beta | On 2026-07-23 the operator completed one Seedance 2.0 image-reference video generation. SQLite recorded a provider task ID, one result URL, terminal `succeeded`, and deleted reference-upload state, which implies submit → status polling → download/project finalization → cleanup completed. This is one operator-observed flow, not a latency or reliability benchmark. |
-| Seedream paid generation | **Not verified successful** | One attempt was rejected by the account's Safe Experience Mode inference limit. A later Beta attempt on 2026-07-24 reached the client's former approximately 60-second transport timeout; unified logging recorded `The request timed out`, while SQLite had no HTTP/provider error code, provider task ID, result URL, or usage. No successful paid Seedream output is claimed. |
-| Crash recovery with accepted provider task | **Not verified live** | The exit/relaunch drill occurred before a provider task ID was persisted, so the job correctly became `needs_attention`. It does not verify resuming a genuinely queued/running remote task. |
+| Seedream paid generation | Passed once in Beta | On 2026-07-25 the operator completed a Seedream 5.0 Pro image generation after the timeout fix. SQLite recorded one attempt, a provider task ID, one result, 4,450 output/total Tokens, terminal `succeeded`, and deleted reference-upload state. The end-to-end local duration was about 129 seconds. |
+| Crash recovery with accepted provider task | Passed once in Beta; unopened-project staging remains local-contract evidence | On 2026-07-28 a Seedance job was created, the app exited while it was active, and a new process launched 31 seconds later. The job later reached `succeeded` with one attempt, the original provider task ID, one result, 108,900 total Tokens, and deleted upload state. This verifies restart recovery without resubmission and project finalization. The project was opened before the local terminal write, so this run does not independently prove output staging completed while no project was open. |
+
+## Operator-observed Beta timeline
+
+- 2026-07-25 00:10:47–00:12:56: Seedream image generation completed with one
+  provider submission, one output, recorded usage, project media installation,
+  and reference-upload deletion.
+- 2026-07-28 00:06:31: AI Chat created the Seedance generation Job and
+  placeholder.
+- 2026-07-28 00:07:49: the first Beta process completed application
+  termination while the remote Job was active.
+- 2026-07-28 00:08:20: a new Beta process launched. SQLite retained the same
+  provider task ID and the final attempt count remained one.
+- 2026-07-28 00:09:13: the operator opened the project.
+- 2026-07-28 00:10:23: the recovered Job installed its video into the project,
+  reached `succeeded`, and deleted the bound staging upload.
+
+These observations come from the Beta SQLite database and macOS unified log.
+They do not expose prompts, signed URLs, credentials, or full provider task
+identifiers.
 
 ## Automated commands
 
@@ -109,9 +128,9 @@ The harness creates a unique tiny PNG object, validates authenticated upload and
 ## Operator acceptance: Seedream and Seedance
 
 1. Enter the Volcengine Ark API key and staging Broker token in the matching Breazin environment settings/Keychain, then fully relaunch the app so launch preloading and global recovery use them.
-2. With a test project open, generate one low-cost Seedream 5.0 Pro 1K image from a local image reference. During the synchronous request AI Chat should show `Waiting for provider`, not a fabricated remote queue state. Confirm normalization, R2 upload, URL refresh if applicable, provider response, output download, project media creation, SQLite terminal state, and R2 cleanup. If no response arrives within five minutes, confirm the row becomes `Failed`, the spinner stops, and the warning says Ark may still have processed the request; check Ark usage before manually retrying.
+2. Seedream success was observed once on 2026-07-25. For a future repeat, generate one low-cost Seedream 5.0 Pro 1K image from a local image reference. During the synchronous request AI Chat should show `Waiting for provider`, not a fabricated remote queue state. Confirm normalization, R2 upload, URL refresh if applicable, provider response, output download, project media creation, SQLite terminal state, and R2 cleanup. If no response arrives within five minutes, confirm the row becomes `Failed`, the spinner stops, and the warning says Ark may still have processed the request; check Ark usage before manually retrying.
 3. Generate one minimum-duration Seedance 2.0 video with representative local image/video/audio references. Confirm standardized MP4/H.264 and M4A/AAC inputs, provider role mapping, polling, result download, project persistence, and cleanup.
-4. Run a recovery drill only after AI Chat shows a persisted Provider Task ID and the state `queued` or `running`: close the project and terminate the app, relaunch without opening the project, then confirm polling/download staging resumes without another submit or duplicate charge. Open the project and confirm finalization.
+4. Restart recovery with a persisted Provider Task ID and no duplicate submit was observed once on 2026-07-28. A future drill should leave the project closed until SQLite reaches `finalizing` with a staged output path, then open the project and confirm finalization; that stricter unopened-project staging observation has not yet been recorded live.
 5. Run a cancellation drill near provider completion and confirm SQLite ends `cancelled`, late success cannot win, and temporary references/staged outputs are removed.
 
 Record provider request IDs, timings, final SQLite states, generated asset locations, and object deletion results without recording API keys, Broker tokens, signed URLs, prompts, or absolute local source paths.

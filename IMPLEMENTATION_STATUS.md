@@ -1,6 +1,6 @@
 # PLAN implementation status
 
-Updated 2026-07-24 against `PLAN.md` in the parent workspace.
+Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 
 ## Completed foundation
 
@@ -20,15 +20,15 @@ Updated 2026-07-24 against `PLAN.md` in the parent workspace.
 - Automated local contracts cover generation crash recovery, duplicate recovery, unopened projects, ambiguous submission, download staging, cancellation/completion races, reference standardization, upload/refresh/delete binding, Volcengine request mapping, Broker health/authentication/presigning/object verification/complete/refresh/delete, expired or tampered handles, and lifecycle configuration.
 - Real Cloudflare staging resource checks confirmed the three R2 buckets exist, the staging Worker is deployed, required secret names are present, `uploads-staging.breazin.com/healthz` returns staging health, unauthenticated upload creation returns `401`, and the `tmp/` two-day lifecycle rule is active.
 - A Beta Seedance run on 2026-07-23 verified authenticated reserve/presigned `PUT`/complete, provider submit/poll, generated-output finalization, and bound-upload delete once. The standalone staging harness, explicit object-byte read, refresh, and real-time expiry are still not claimed; the local acceptance-only Worker revision remains undeployed.
-- One paid Seedance 2.0 image-reference generation succeeded in Beta. Seedream success remains unverified: the first attempt hit the account's Safe Experience Mode inference limit, and a later attempt reached the client's former approximately 60-second response timeout without an HTTP response, provider task ID, result URL, or usage.
-- The live restart drill did not reach a persisted provider task ID before exit, so it proved ambiguous-submission safety but not recovery of a genuinely queued/running remote task.
+- Paid Beta generation now includes one successful Seedream 5.0 Pro image run and two successful Seedance 2.0 image-reference video runs. The successful Seedream row recorded one attempt, one result, 4,450 Tokens, terminal `succeeded`, and deleted reference-upload state.
+- The 2026-07-28 Seedance restart drill exited with an accepted remote Job, relaunched 31 seconds later, and completed with the same provider task ID, one attempt, one result, 108,900 total Tokens, project media installation, and deleted upload state. This verifies no-resubmit restart recovery. Because the project was opened before the local terminal write, unopened-project output staging remains verified by deterministic tests rather than a separate live observation.
 
 See `docs/development/phase-2-acceptance.md` for the evidence matrix and operator steps.
 
 ## Deliberately pending
 
-- Phase 2 operator acceptance: run the standalone authenticated R2 staging harness, repeat Seedream with the five-minute response allowance, and repeat the restart drill only after AI Chat shows a persisted Provider Task ID in `queued` or `running`.
-- Phase 2 follow-ups: add offline-aware retry/backoff and production per-user/device Broker authorization. Seedance task-status query timeout remains a non-terminal refresh error because Volcengine does not define `timeout` as a task terminal state; Seedream's synchronous response timeout is a separate terminal local condition because no queryable task ID exists.
+- Phase 2 remaining closure work: add offline-aware retry/backoff with persisted `nextRetryAt` scheduling and deterministic fault coverage. The standalone authenticated R2 harness, live cancellation-near-completion drill, and stricter unopened-project staging observation remain optional additional production evidence, not substitutes for automated contracts.
+- External-Beta hardening: replace the bootstrap Broker bearer token with per-user/device authorization. Seedance task-status query timeout remains a non-terminal refresh error because Volcengine does not define `timeout` as a task terminal state; Seedream's synchronous response timeout is a separate terminal local condition because no queryable task ID exists.
 - OpenAI GPT Image 2 (OAuth route) and Midjourney (Discord bot route) are represented as unimplemented authentication/provider contracts only; neither integration is presented as working.
 - Phase 3 optional platform accounts and aggregated feedback require a backend/privacy decision.
 - Phase 4 release automation requires Apple Developer signing/notarization credentials and a Sparkle EdDSA key.
