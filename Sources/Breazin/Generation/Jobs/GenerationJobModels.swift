@@ -163,6 +163,7 @@ enum GenerationUploadState: String, Codable, Sendable {
     case uploading
     case uploaded
     case failed
+    case expired
     case deleted
 }
 

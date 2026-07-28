@@ -52,6 +52,16 @@ struct ProviderContractsTests {
         #expect(!ProviderGenerationState.needsAttention.isTerminal)
     }
 
+    @Test func onlyQueueRunAndDownloadStatesRemainActivelyPolled() {
+        #expect(ProviderGenerationState.queued.isActivelyProcessing)
+        #expect(ProviderGenerationState.running.isActivelyProcessing)
+        #expect(ProviderGenerationState.downloading.isActivelyProcessing)
+        #expect(!ProviderGenerationState.needsAttention.isActivelyProcessing)
+        #expect(!ProviderGenerationState.succeeded.isActivelyProcessing)
+        #expect(!ProviderGenerationState.failed.isActivelyProcessing)
+        #expect(!ProviderGenerationState.cancelled.isActivelyProcessing)
+    }
+
     @Test func generationJobActivityExcludesNeedsAttention() {
         #expect(GenerationJobState.preparing.isActivelyProcessing)
         #expect(GenerationJobState.submitting.isActivelyProcessing)

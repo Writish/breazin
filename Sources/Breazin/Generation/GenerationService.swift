@@ -732,7 +732,12 @@ final class GenerationService {
                 case .failed, .cancelled:
                     await failProviderJob(job, placeholders: placeholders, editor: editor, onFailure: onFailure)
                     return
-                case .queued, .running, .downloading, .needsAttention:
+                case .needsAttention:
+                    // An unknown provider state needs a user decision or a
+                    // future app update; continuing to poll would create an
+                    // unbounded background request loop after the UI stops.
+                    return
+                case .queued, .running, .downloading:
                     break
                 }
                 try await Task.sleep(for: .seconds(2))

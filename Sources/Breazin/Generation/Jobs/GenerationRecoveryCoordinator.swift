@@ -93,6 +93,10 @@ actor GenerationRecoveryCoordinator {
         guard !didStart else { return }
         didStart = true
         do {
+            let expired = try await store.expireUploads(now: now())
+            if expired > 0 {
+                Log.generation.notice("expired stale generation upload handles count=\(expired)")
+            }
             for job in try await store.recoverableJobs() {
                 startRecoveryTaskIfNeeded(jobID: job.id)
             }
@@ -105,6 +109,7 @@ actor GenerationRecoveryCoordinator {
     /// diagnostics and automated tests.
     @discardableResult
     func recoverAllOnce() async throws -> RecoverySummary {
+        _ = try await store.expireUploads(now: now())
         let jobs = try await store.recoverableJobs()
         var summary = RecoverySummary(scanned: jobs.count)
         for job in jobs {

@@ -276,6 +276,34 @@ actor GenerationJobStore {
         )
     }
 
+    @discardableResult
+    func expireUploads(now: Date = Date()) throws -> Int {
+        try openIfNeeded()
+        let statement = try prepare(
+            """
+            UPDATE generation_uploads SET state = ?, upload_handle = NULL, remote_url = NULL,
+                remote_url_expires_at = NULL, updated_at = ?
+            WHERE object_expires_at IS NOT NULL
+              AND object_expires_at <= ?
+              AND state NOT IN (?, ?)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(
+            [
+                .text(GenerationUploadState.expired.rawValue),
+                .double(now.timeIntervalSince1970),
+                .double(now.timeIntervalSince1970),
+                .text(GenerationUploadState.expired.rawValue),
+                .text(GenerationUploadState.deleted.rawValue),
+            ],
+            to: statement
+        )
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE else { throw sqliteError(result) }
+        return Int(sqlite3_changes(database))
+    }
+
     func uploads(jobID: String) throws -> [GenerationUploadRecord] {
         try openIfNeeded()
         let statement = try prepare("SELECT * FROM generation_uploads WHERE job_id = ? ORDER BY ordinal ASC")

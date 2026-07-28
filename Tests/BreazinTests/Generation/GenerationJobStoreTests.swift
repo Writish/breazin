@@ -76,6 +76,40 @@ struct GenerationJobStoreTests {
         #expect(deleted.remoteURL == nil)
     }
 
+    @Test func expiredUploadHandlesAreClearedWithoutPretendingBrokerDeleteSucceeded() async throws {
+        let store = makeStore()
+        let job = fixtureJob()
+        try await store.create(job)
+        try await store.createUpload(
+            id: "expired-upload",
+            jobID: job.id,
+            ordinal: 0,
+            sourceAssetID: "asset-expired",
+            mediaKind: "image"
+        )
+        try await store.recordUploadHandle(
+            id: "expired-upload",
+            uploadID: "remote-expired",
+            uploadHandle: "expired-handle"
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        try await store.recordUploaded(
+            id: "expired-upload",
+            remoteURL: "https://example.invalid/expired",
+            remoteURLExpiresAt: now.addingTimeInterval(-60),
+            objectExpiresAt: now.addingTimeInterval(-1)
+        )
+
+        #expect(try await store.expireUploads(now: now) == 1)
+        let expired = try #require(try await store.uploads(jobID: job.id).first)
+        #expect(expired.state == .expired)
+        #expect(expired.uploadHandle == nil)
+        #expect(expired.remoteURL == nil)
+        #expect(expired.remoteURLExpiresAt == nil)
+        #expect(expired.objectExpiresAt == now.addingTimeInterval(-1))
+        #expect(try await store.expireUploads(now: now) == 0)
+    }
+
     @Test func staleProviderUpdateCannotRegressRunningJobToQueued() async throws {
         let store = makeStore()
         let job = fixtureJob()

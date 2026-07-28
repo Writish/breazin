@@ -76,6 +76,13 @@ enum ProviderGenerationState: String, Codable, Sendable {
         default: false
         }
     }
+
+    var isActivelyProcessing: Bool {
+        switch self {
+        case .queued, .running, .downloading: true
+        case .succeeded, .failed, .cancelled, .needsAttention: false
+        }
+    }
 }
 
 struct ProviderGenerationJob: Codable, Equatable, Sendable {

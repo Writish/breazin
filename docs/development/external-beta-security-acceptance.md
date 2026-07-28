@@ -20,10 +20,13 @@ Every gate below must be green for the exact candidate artifact.
   the app bundle, repository, generated types, or logs.
 - Upload authorization is per opaque subject/device. Handles and object prefixes
   bind both identities; cross-device complete/refresh/delete must fail.
+- Every presigned PUT must bind `x-amz-checksum-sha256`; `complete` must compare
+  the checksum retained by R2 with the signed handle and must not accept matching
+  client-authored metadata as proof of byte integrity.
 - The authenticated acceptance harness must pass health, create, presigned PUT,
   object metadata and byte validation, complete, GET, refresh, delete, and
   post-delete `404`. The two-day `tmp/` lifecycle rule must be enabled.
-- The current deployed staging version passes deployment/configuration, health,
+- Staging version `319267f7-014a-45e2-b6d9-82582592d43d` passes deployment/configuration, health,
   unauthenticated rejection, and lifecycle checks. Its authenticated round trip
   remains pending until the test Mac is unlocked for the Beta Keychain read.
 
