@@ -38,6 +38,9 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: Ensure ripgrep
+        run: command -v rg >/dev/null || brew install ripgrep
+
       - name: Verify product identity
         run: scripts/ci/verify-branding.sh
 
