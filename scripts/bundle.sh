@@ -43,7 +43,6 @@ POSTHOG_PROJECT_TOKEN="${POSTHOG_PROJECT_TOKEN:-}"
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
 PROVISION_PROFILE="${PROVISION_PROFILE:-}"
 ENTITLEMENTS="$ROOT/scripts/Breazin.entitlements"
-KEYCHAIN_ACCESS_GROUP="${KEYCHAIN_ACCESS_GROUP:-}"
 RESOURCES="$ROOT/Sources/Breazin/Resources"
 OUTPUT_ROOT="${BREAZIN_OUTPUT_DIR:-$ROOT/.build}"
 mkdir -p "$OUTPUT_ROOT"
@@ -147,20 +146,6 @@ else
   echo "==> POSTHOG_PROJECT_TOKEN not set — product analytics will be a no-op in this build"
 fi
 
-inject_plist() {
-  local key="$1" value="$2"
-  if [ -z "$value" ]; then
-    echo "==> $key not set in $ENV_FILE — legacy backend capability unavailable"
-    return
-  fi
-  /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP/Contents/Info.plist"
-}
-
-echo "==> Injecting backend config into Info.plist"
-inject_plist BreazinClerkPublishableKey "${CLERK_PUBLISHABLE_KEY:-}"
-inject_plist BreazinConvexDeploymentURL "${CONVEX_DEPLOYMENT_URL:-}"
-inject_plist BreazinConvexHttpURL "${CONVEX_HTTP_URL:-}"
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
 
@@ -186,16 +171,6 @@ cp "$MCPB_FRESH" "$APP/Contents/Resources/breazin.mcpb"
 rm -rf "$MCPB_WORK"
 if [ -d "$RES_BUNDLE/Images" ]; then
   cp -R "$RES_BUNDLE/Images" "$APP/Contents/Resources/"
-fi
-# .lproj folders must live at the bundle root for macOS to resolve them —
-# flatten out of Resources/Localization/ even though that's just an org folder.
-if [ -d "$RES_BUNDLE/Localization" ]; then
-  for locale_dir in "$RES_BUNDLE/Localization"/*.lproj; do
-    [ -d "$locale_dir" ] && cp -R "$locale_dir" "$APP/Contents/Resources/"
-  done
-else
-  echo "!! missing Localization/ in SwiftPM resource bundle at $RES_BUNDLE" >&2
-  exit 1
 fi
 if [ -d "$RES_BUNDLE/Changelog" ]; then
   cp -R "$RES_BUNDLE/Changelog" "$APP/Contents/Resources/"
@@ -328,8 +303,6 @@ if [ -n "$PROVISION_PROFILE" ]; then
   echo "==> Embedding provisioning profile"
   cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
 fi
-inject_plist BreazinClerkKeychainAccessGroup "$KEYCHAIN_ACCESS_GROUP"
-
 echo "==> Codesigning main app"
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \

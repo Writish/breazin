@@ -13,6 +13,9 @@ final class ToolExecutor {
     private let frontmostProjectProvider: (() -> VideoProject?)?
     // External MCP stays on this project until manage_project rebinds it.
     private weak var boundProject: VideoProject?
+    private let externalReversibleEditsEnabled: Bool
+    private let enforceInAppCapabilityPolicy: Bool
+    private let externalClientID: String?
     private var mcpClientInfo: MCPClientInfo?
     private(set) var mcpSessionActivation = Analytics.SessionActivation()
     let exportQueue: ExportQueue
@@ -33,17 +36,23 @@ final class ToolExecutor {
 
     init(
         editor: EditorViewModel,
+        enforceInAppCapabilityPolicy: Bool = false,
         exportQueue: ExportQueue = .shared,
         generationJobStore: GenerationJobStore = .shared
     ) {
         self.inAppEditor = editor
         self.frontmostProjectProvider = nil
+        self.externalReversibleEditsEnabled = false
+        self.enforceInAppCapabilityPolicy = enforceInAppCapabilityPolicy
+        self.externalClientID = nil
         self.exportQueue = exportQueue
         self.generationJobStore = generationJobStore
     }
 
     init(
         projectProvider: @escaping () -> VideoProject?,
+        externalReversibleEditsEnabled: Bool = false,
+        externalClientID: String? = nil,
         exportQueue: ExportQueue = .shared,
         generationJobStore: GenerationJobStore = .shared
     ) {
@@ -51,6 +60,9 @@ final class ToolExecutor {
         self.inAppEditor = nil
         self.frontmostProjectProvider = projectProvider
         self.boundProject = project
+        self.externalReversibleEditsEnabled = externalReversibleEditsEnabled
+        self.enforceInAppCapabilityPolicy = false
+        self.externalClientID = externalClientID
         self.exportQueue = exportQueue
         self.generationJobStore = generationJobStore
     }
@@ -66,7 +78,12 @@ final class ToolExecutor {
 
     var lastTranscriptContext: TranscriptionToolContext?
 
-    func execute(name: String, args: [String: Any], source: String = "agent") async -> ToolResult {
+    func execute(
+        name: String,
+        args: [String: Any],
+        source: String = "agent",
+        approvedByUser: Bool = false
+    ) async -> ToolResult {
         let started = ContinuousClock.now
         guard let tool = ToolName(rawValue: name) else {
             captureToolAnalytics(
@@ -86,13 +103,25 @@ final class ToolExecutor {
         // encoding with an editor-owned executor.
         let policySource: ToolPolicySource =
             source == "mcp" && frontmostProjectProvider != nil ? .externalMCP : .inAppAgent
-        switch ToolCapabilityPolicy.decision(for: tool, args: args, source: policySource) {
-        case .allow:
-            break
-        case .approvalRequired(let reason):
-            return .error("Approval required: \(reason)")
-        case .deny(let reason):
-            return .error("Capability denied: \(reason)")
+        if policySource == .externalMCP || enforceInAppCapabilityPolicy {
+            switch ToolCapabilityPolicy.decision(
+                for: tool,
+                args: args,
+                source: policySource,
+                externalReversibleEditsEnabled: externalReversibleEditsEnabled
+            ) {
+            case .allow:
+                break
+            case .approvalRequired where
+                policySource == .inAppAgent
+                    && approvedByUser
+                    && ToolCapabilityPolicy.level(for: tool, args: args) >= .externalOrPaid:
+                break
+            case .approvalRequired(let reason):
+                return .error("Approval required: \(reason)")
+            case .deny(let reason):
+                return .error("Capability denied: \(reason)")
+            }
         }
 
         // project tools act on AppState before editor is available
@@ -187,6 +216,9 @@ final class ToolExecutor {
         if let mcpClientInfo {
             properties["client_info"] = mcpClientInfo.payload
         }
+        if let externalClientID {
+            properties["client_id"] = externalClientID
+        }
         return properties
     }
 
@@ -234,6 +266,9 @@ final class ToolExecutor {
         }
         if let failureReason {
             payload["failure_reason"] = failureReason
+        }
+        if source == "mcp", let externalClientID {
+            payload["client_id"] = externalClientID
         }
         Analytics.capture(.agentToolCalled, properties: payload)
     }

@@ -364,8 +364,7 @@ final class GenerationService {
             )
         }
 
-        // Compatibility-only read for pre-Breazin projects. Palmier jobs cannot be
-        // queried after removing the private backend, so make the terminal state explicit.
+        // Legacy private-backend jobs cannot be queried, so close them without resubmission.
         for asset in editor.mediaAssets where asset.isRecoveringGeneration {
             guard let input = asset.generationInput,
                   input.providerId == nil,

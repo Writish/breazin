@@ -21,14 +21,35 @@ enum ToolPolicyDecision: Equatable, Sendable {
     case deny(reason: String)
 }
 
+struct AgentToolApprovalRequest: Identifiable, Equatable, Sendable {
+    let id: String
+    let toolName: String
+    let level: ToolCapabilityLevel
+
+    var title: String {
+        level == .highImpact ? "Confirm high-impact action" : "Confirm external or paid action"
+    }
+
+    var detail: String {
+        switch level {
+        case .externalOrPaid:
+            "The AI Chat wants to run \(toolName). This may upload data, access a selected file, export, or incur provider charges."
+        case .highImpact:
+            "The AI Chat wants to run \(toolName). This can change project settings, delete content, cancel work, or otherwise have broad impact."
+        default:
+            "The AI Chat wants to run \(toolName)."
+        }
+    }
+}
+
 /// One policy shared by the in-app agent and external MCP. External MCP is
 /// deliberately read-only unless the user explicitly enables reversible edits.
 enum ToolCapabilityPolicy {
-    private static let externalEditsKey = "\(AppConfiguration.current.preferencesPrefix).mcp.reversible-edits"
+    private static let inAppEditsKey = "\(AppConfiguration.current.preferencesPrefix).agent.reversible-edits"
 
-    static var externalReversibleEditsEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: externalEditsKey) }
-        set { UserDefaults.standard.set(newValue, forKey: externalEditsKey) }
+    static var inAppReversibleEditsEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: inAppEditsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: inAppEditsKey) }
     }
 
     static func level(for tool: ToolName, args: [String: Any] = [:]) -> ToolCapabilityLevel {
@@ -64,7 +85,8 @@ enum ToolCapabilityPolicy {
         for tool: ToolName,
         args: [String: Any] = [:],
         source: ToolPolicySource,
-        externalReversibleEditsEnabled: Bool = Self.externalReversibleEditsEnabled
+        externalReversibleEditsEnabled: Bool = false,
+        inAppReversibleEditsEnabled: Bool = Self.inAppReversibleEditsEnabled
     ) -> ToolPolicyDecision {
         let capability = level(for: tool, args: args)
         switch (source, capability) {
@@ -80,9 +102,16 @@ enum ToolCapabilityPolicy {
             return .approvalRequired(reason: "External imports, exports, uploads, and paid generation require an in-app approval and are unavailable to unattended MCP sessions.")
         case (.externalMCP, .highImpact):
             return .deny(reason: "High-impact project operations must be performed and confirmed in the Breazin app.")
-        case (.inAppAgent, .readProject), (.inAppAgent, .reversibleEdit),
-             (.inAppAgent, .externalOrPaid), (.inAppAgent, .highImpact):
+        case (.inAppAgent, .readProject):
             return .allow
+        case (.inAppAgent, .reversibleEdit) where inAppReversibleEditsEnabled:
+            return .allow
+        case (.inAppAgent, .reversibleEdit):
+            return .approvalRequired(reason: "Enable AI Chat reversible edits in Settings > Agent.")
+        case (.inAppAgent, .externalOrPaid):
+            return .approvalRequired(reason: "This external or paid action needs confirmation in the Breazin app.")
+        case (.inAppAgent, .highImpact):
+            return .approvalRequired(reason: "This high-impact action always needs confirmation in the Breazin app.")
         }
     }
 }

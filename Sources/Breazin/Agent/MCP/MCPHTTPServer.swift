@@ -7,32 +7,60 @@ struct MCPServerInstance: Sendable {
     let onInitialize: @Sendable (Client.Info) async -> Void
 }
 
+struct MCPRequestRateLimiter {
+    let limit: Int
+    let window: TimeInterval
+    private(set) var requests: [String: [Date]] = [:]
+
+    mutating func allow(_ key: String, now: Date = Date()) -> Bool {
+        let cutoff = now.addingTimeInterval(-window)
+        var current = requests[key, default: []].filter { $0 > cutoff }
+        guard current.count < limit else {
+            requests[key] = current
+            return false
+        }
+        current.append(now)
+        requests[key] = current
+        return true
+    }
+}
+
 /// HTTP server for MCP. Each client session gets its own `Server` + stateful transport
 actor MCPHTTPServer {
 
     private let port: UInt16
-    private let accessToken: String
-    private let makeServer: @Sendable () async -> MCPServerInstance
+    private let authenticate: @Sendable (String?) -> MCPPairedClient?
+    private let pairClient: @Sendable (String, String?) throws -> MCPPairingReceipt
+    private let makeServer: @Sendable (MCPPairedClient) async -> MCPServerInstance
     private nonisolated(unsafe) var listener: NWListener?
 
     private struct Session {
         let server: Server
         let transport: StatefulHTTPServerTransport
+        let clientID: String
         var lastUsed: ContinuousClock.Instant
         var toolListAnnounced = false
     }
 
     private var sessions: [String: Session] = [:]
-    private static let sessionIdleLimit: Duration = .seconds(900)
-    private static let sessionCountLimit = 4
+    private let sessionIdleLimit: Duration
+    private let sessionCountLimit: Int
+    private var pairingRateLimiter = MCPRequestRateLimiter(limit: 5, window: 60)
+    private var clientRateLimiter = MCPRequestRateLimiter(limit: 120, window: 60)
 
     init(
         port: UInt16,
-        accessToken: String,
-        makeServer: @escaping @Sendable () async -> MCPServerInstance
+        authenticate: @escaping @Sendable (String?) -> MCPPairedClient?,
+        pairClient: @escaping @Sendable (String, String?) throws -> MCPPairingReceipt,
+        sessionIdleLimit: Duration = .seconds(900),
+        sessionCountLimit: Int = 4,
+        makeServer: @escaping @Sendable (MCPPairedClient) async -> MCPServerInstance
     ) {
         self.port = port
-        self.accessToken = accessToken
+        self.authenticate = authenticate
+        self.pairClient = pairClient
+        self.sessionIdleLimit = sessionIdleLimit
+        self.sessionCountLimit = sessionCountLimit
         self.makeServer = makeServer
     }
 
@@ -119,15 +147,25 @@ actor MCPHTTPServer {
     // MARK: - Routing
 
     private func handle(request: HTTPRequest, connection: NWConnection) async {
-        guard MCPAccessControl.authorized(
-            header: request.header("Authorization"),
-            expectedToken: accessToken
-        ) else {
+        if request.method.uppercased() == "POST", request.path == "/pair" {
+            guard pairingRateLimiter.allow("pairing") else {
+                sendJSON(["error": "rate_limited"], status: 429, on: connection)
+                return
+            }
+            handlePairing(request: request, connection: connection)
+            return
+        }
+
+        guard let client = authenticate(request.header("Authorization")) else {
             sendRaw(
                 "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\n\r\n",
                 on: connection,
                 keepAlive: false
             )
+            return
+        }
+        guard clientRateLimiter.allow(client.id) else {
+            sendJSON(["error": "rate_limited"], status: 429, on: connection)
             return
         }
 
@@ -145,9 +183,15 @@ actor MCPHTTPServer {
 
         let response: HTTPResponse
         if let claimed = request.header(HTTPHeaderName.sessionID) {
-            guard var session = sessions[claimed] else {
+            guard var session = sessions[claimed], session.clientID == client.id else {
                 // Unknown/expired session → 404 per spec; the client re-initializes
                 // and refreshes its tool inventory.
+                sendRaw("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n", on: connection, keepAlive: true)
+                receive(on: connection)
+                return
+            }
+            guard session.lastUsed >= ContinuousClock.now - sessionIdleLimit else {
+                evictSession(id: claimed)
                 sendRaw("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n", on: connection, keepAlive: true)
                 receive(on: connection)
                 return
@@ -164,15 +208,20 @@ actor MCPHTTPServer {
             let transport = StatefulHTTPServerTransport(
                 validationPipeline: StandardValidationPipeline(validators: baseValidators() + [SessionValidator()])
             )
-            let instance = await makeServer()
+            let instance = await makeServer(client)
             try? await instance.server.start(transport: transport) { clientInfo, _ in
                 await instance.onInitialize(clientInfo)
             }
             response = await transport.handleRequest(request)
             if let assigned = response.headers[HTTPHeaderName.sessionID] {
                 pruneIdleSessions()
-                sessions[assigned] = Session(server: instance.server, transport: transport, lastUsed: .now)
-                Log.mcp.notice("session started id=\(assigned) total=\(self.sessions.count)")
+                sessions[assigned] = Session(
+                    server: instance.server,
+                    transport: transport,
+                    clientID: client.id,
+                    lastUsed: .now
+                )
+                Log.mcp.notice("session started client=\(client.id) total=\(self.sessions.count)")
             } else {
                 await transport.disconnect()
             }
@@ -186,6 +235,66 @@ actor MCPHTTPServer {
         writeResponse(response, on: connection)
     }
 
+    private func handlePairing(request: HTTPRequest, connection: NWConnection) {
+        struct PairRequest: Decodable { let clientName: String }
+        struct PairResponse: Encodable {
+            let clientId: String
+            let clientName: String
+            let capabilities: [String]
+            let accessToken: String
+            let createdAt: Date
+        }
+
+        guard pairingOriginAllowed(request.header("Origin")) else {
+            sendJSON(["error": "invalid_origin"], status: 403, on: connection)
+            return
+        }
+        guard let body = request.body,
+              body.count <= 4_096,
+              request.header("Content-Type")?.lowercased().hasPrefix("application/json") == true,
+              let input = try? JSONDecoder().decode(PairRequest.self, from: body)
+        else {
+            sendJSON(["error": "invalid_pairing_request"], status: 400, on: connection)
+            return
+        }
+        do {
+            let receipt = try pairClient(input.clientName, request.header("Authorization"))
+            let response = PairResponse(
+                clientId: receipt.client.id,
+                clientName: receipt.client.name,
+                capabilities: receipt.client.capabilities.map(\.rawValue).sorted(),
+                accessToken: receipt.accessToken,
+                createdAt: receipt.client.createdAt
+            )
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(response) else {
+                sendJSON(["error": "pairing_failed"], status: 500, on: connection)
+                return
+            }
+            sendData(data, status: 201, on: connection)
+        } catch let error as MCPAccessControlError {
+            let status = switch error {
+            case .invalidPairingSecret: 401
+            case .invalidClientName: 400
+            case .clientLimitReached: 409
+            }
+            sendJSON(["error": errorCode(error)], status: status, on: connection)
+        } catch {
+            sendJSON(["error": "pairing_failed"], status: 500, on: connection)
+        }
+    }
+
+    private nonisolated func pairingOriginAllowed(_ origin: String?) -> Bool {
+        guard let origin else { return true } // Native CLI clients do not send Origin.
+        guard let url = URL(string: origin),
+              url.scheme == "http",
+              url.host == "127.0.0.1" || url.host == "localhost",
+              url.port == Int(port)
+        else { return false }
+        return true
+    }
+
     private func announceToolList(sessionID: String) {
         guard var session = sessions[sessionID], !session.toolListAnnounced else { return }
         session.toolListAnnounced = true
@@ -196,7 +305,7 @@ actor MCPHTTPServer {
                 try await server.notify(ToolListChangedNotification.message())
             } catch {
                 Log.mcp.warning("tool list_changed notify failed id=\(sessionID): \(error.localizedDescription)")
-                await self.resetToolListAnnouncement(sessionID: sessionID)
+                self.resetToolListAnnouncement(sessionID: sessionID)
             }
         }
     }
@@ -220,11 +329,11 @@ actor MCPHTTPServer {
 
     // Evicted clients recover transparently: their next request gets 404 and they re-initialize.
     private func pruneIdleSessions() {
-        let cutoff = ContinuousClock.now - Self.sessionIdleLimit
+        let cutoff = ContinuousClock.now - sessionIdleLimit
         for (id, session) in sessions where session.lastUsed < cutoff {
             evictSession(id: id)
         }
-        while sessions.count >= Self.sessionCountLimit,
+        while sessions.count >= sessionCountLimit,
               let oldest = sessions.min(by: { $0.value.lastUsed < $1.value.lastUsed }) {
             evictSession(id: oldest.key)
         }
@@ -303,10 +412,32 @@ actor MCPHTTPServer {
         })
     }
 
+    private nonisolated func sendJSON(_ value: [String: String], status: Int, on connection: NWConnection) {
+        let data = (try? JSONSerialization.data(withJSONObject: value)) ?? Data()
+        sendData(data, status: status, on: connection)
+    }
+
+    private nonisolated func sendData(_ data: Data, status: Int, on connection: NWConnection) {
+        let head = "HTTP/1.1 \(status) \(statusText(status))\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
+        var response = Data(head.utf8)
+        response.append(data)
+        connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    private nonisolated func errorCode(_ error: MCPAccessControlError) -> String {
+        switch error {
+        case .invalidPairingSecret: "invalid_pairing_secret"
+        case .invalidClientName: "invalid_client_name"
+        case .clientLimitReached: "client_limit_reached"
+        }
+    }
+
     private nonisolated func statusText(_ code: Int) -> String {
         switch code {
-        case 200: "OK"; case 202: "Accepted"; case 400: "Bad Request"; case 401: "Unauthorized"
+        case 200: "OK"; case 201: "Created"; case 202: "Accepted"; case 400: "Bad Request"; case 401: "Unauthorized"
+        case 403: "Forbidden"
         case 404: "Not Found"; case 405: "Method Not Allowed"; case 409: "Conflict"
+        case 429: "Too Many Requests"
         case 500: "Internal Server Error"
         default: "Unknown"
         }

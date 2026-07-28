@@ -2,18 +2,22 @@ import AppKit
 import SwiftUI
 
 struct MCPInstructionsPane: View {
-    @State private var claudeInstallError: String?
-
     private var mcpEndpoint: String { "http://127.0.0.1:\(MCPService.port)/mcp" }
-    private var authorizationHeader: String { "Authorization: Bearer \(MCPAccessControl.currentToken())" }
+    private var pairingEndpoint: String { "http://127.0.0.1:\(MCPService.port)/pair" }
+    private var pairingCommand: String {
+        """
+        read -s BREAZIN_MCP_PAIRING_SECRET
+        curl --fail-with-body \(pairingEndpoint) \\
+          -H 'Content-Type: application/json' \\
+          -H "Authorization: Bearer ${BREAZIN_MCP_PAIRING_SECRET}" \\
+          --data '{"clientName":"My MCP client"}'
+        unset BREAZIN_MCP_PAIRING_SECRET
+        """
+    }
     private var mcpServiceName: String { AppConfiguration.current.mcpServiceName }
 
     private var claudeCodeCommand: String {
-        "claude mcp add --transport http \(mcpServiceName) \(mcpEndpoint)"
-    }
-
-    private var codexCommand: String {
-        "codex mcp add \(mcpServiceName) --url \(mcpEndpoint)"
+        "claude mcp add --transport http -H \"Authorization: Bearer <paired-client-token>\" \(mcpServiceName) \(mcpEndpoint)"
     }
 
     private var cursorJSONConfig: String {
@@ -22,20 +26,14 @@ struct MCPInstructionsPane: View {
           "mcpServers": {
             "\(mcpServiceName)": {
               "type": "http",
-              "url": "\(mcpEndpoint)"
+              "url": "\(mcpEndpoint)",
+              "headers": {
+                "Authorization": "Bearer <paired-client-token>"
+              }
             }
           }
         }
         """
-    }
-
-    private var cursorDeepLink: URL? {
-        let config: [String: String] = ["type": "http", "url": mcpEndpoint]
-        guard
-            let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
-            let encoded = data.base64EncodedString().addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
-        else { return nil }
-        return URL(string: "cursor://anysphere.cursor-deeplink/mcp/install?name=\(mcpServiceName)&config=\(encoded)")
     }
 
     var body: some View {
@@ -50,14 +48,14 @@ struct MCPInstructionsPane: View {
                     endpointRow
                 }
 
-                SettingsGroup(title: "Authentication header") {
+                SettingsGroup(title: "Pair this client") {
                     CodeBlockView(
-                        content: authorizationHeader,
+                        content: pairingCommand,
                         fontSize: AppTheme.FontSize.sm,
                         foreground: AppTheme.Text.primaryColor,
                         verticalPadding: AppTheme.Spacing.smMd
                     )
-                    Text("Keep this installation token private. Add it as an HTTP header in the MCP client; rotate it from Settings > Agent to revoke every existing client.")
+                    Text("Run once while the local MCP server is enabled. Copy accessToken from the response into only that client. Breazin stores only its digest; revoke the client from Settings > Agent.")
                         .font(.system(size: AppTheme.FontSize.sm))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
@@ -72,17 +70,6 @@ struct MCPInstructionsPane: View {
             .padding(.bottom, AppTheme.Spacing.xxl)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .alert(
-            "Unable to open Claude Desktop",
-            isPresented: Binding(
-                get: { claudeInstallError != nil },
-                set: { if !$0 { claudeInstallError = nil } }
-            )
-        ) {
-            Button("Dismiss") { claudeInstallError = nil }
-        } message: {
-            Text(claudeInstallError ?? "Try again.")
-        }
     }
 
     private var endpointRow: some View {
@@ -110,8 +97,7 @@ struct MCPInstructionsPane: View {
         agentSection(
             .cursor,
             name: "Cursor",
-            description: "Install the Breazin MCP server in Cursor.",
-            action: ("Install in Cursor", openCursor)
+            description: "Add the paired client token to Cursor's MCP configuration."
         ) {
             ManualFallback(
                 intro: "Add this configuration to ~/.cursor/mcp.json.",
@@ -124,10 +110,11 @@ struct MCPInstructionsPane: View {
         agentSection(
             .claude,
             name: "Claude Desktop",
-            description: "Install the bundled Breazin connector.",
-            action: ("Install in Claude Desktop", openClaudeDesktopBundle)
+            description: "Configure the local HTTP endpoint and paired client Authorization header."
         ) {
-            EmptyView()
+            Text("Use the same URL and Authorization header shown above; do not reuse another client's token.")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
         }
     }
 
@@ -145,9 +132,12 @@ struct MCPInstructionsPane: View {
         agentSection(
             .codex,
             name: "Codex",
-            description: "Run this command once in Terminal."
+            description: "The installed Codex CLI only accepts local stdio servers through `codex mcp add`."
         ) {
-            CodeBlockView(content: codexCommand)
+            Text("Do not use an unauthenticated bridge. Connect Breazin only after Codex supports authenticated HTTP MCP configuration.")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -159,16 +149,11 @@ struct MCPInstructionsPane: View {
         _ agent: SkillExternalAgent,
         name: String,
         description: String,
-        action: (label: String, perform: () -> Void)? = nil,
         @ViewBuilder details: () -> Details
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
                 agentIdentity(agent: agent, name: name, description: description)
-                if let action {
-                    Spacer(minLength: AppTheme.Spacing.md)
-                    externalAction(action.label, action: action.perform)
-                }
             }
             details()
         }
@@ -191,51 +176,6 @@ struct MCPInstructionsPane: View {
         }
     }
 
-    private func externalAction(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: AppTheme.Spacing.xxs) {
-                Text(label)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.regular))
-            }
-            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.regular))
-            .foregroundStyle(AppTheme.Accent.link)
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .pointerStyle(.link)
-    }
-
-    private func openCursor() {
-        guard let cursorDeepLink else { return }
-        NSWorkspace.shared.open(cursorDeepLink, configuration: .init(), completionHandler: nil)
-    }
-
-    private func openClaudeDesktopBundle() {
-        guard let bundleURL = claudeDesktopBundleURL else {
-            claudeInstallError = "The Breazin connector could not be found. Reinstall Breazin, then try again."
-            return
-        }
-        guard let claudeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") else {
-            claudeInstallError = "Install Claude Desktop, then try again."
-            return
-        }
-
-        NSWorkspace.shared.open(
-            [bundleURL],
-            withApplicationAt: claudeURL,
-            configuration: .init()
-        ) { _, error in
-            guard error != nil else { return }
-            Task { @MainActor in
-                claudeInstallError = "Claude Desktop could not open the Breazin connector. Update Claude Desktop, then try again."
-            }
-        }
-    }
-
-    private var claudeDesktopBundleURL: URL? {
-        BundledResource.url("breazin.mcpb")
-    }
 }
 
 private struct CodeBlockView: View {

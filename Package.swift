@@ -72,7 +72,6 @@ let package = Package(
                 .copy("Resources/MCPB/breazin.mcpb"),
                 .copy("Resources/Images"),
                 .copy("Resources/Changelog"),
-                .copy("Resources/Localization"),
                 .copy("Resources/Models"),
             ],
             swiftSettings: [
@@ -89,7 +88,10 @@ let package = Package(
                 "Breazin",
                 .product(name: "MCP", package: "swift-sdk"),
             ],
-            path: "Tests/BreazinTests"
+            path: "Tests/BreazinTests",
+            resources: [
+                .copy("Fixtures"),
+            ]
         ),
     ]
 )

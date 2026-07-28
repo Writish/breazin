@@ -310,8 +310,42 @@ final class VideoProject: NSDocument {
         try fm.copyItem(at: packageURL, to: backupURL)
     }
 
-    nonisolated static func writeProjectPackage(_ snapshot: ProjectPackageSnapshot, to packageURL: URL, sourceURL: URL?) throws {
+    nonisolated static func writeProjectPackage(
+        _ snapshot: ProjectPackageSnapshot,
+        to packageURL: URL,
+        sourceURL: URL?,
+        beforeSafeReplace: (() throws -> Void)? = nil
+    ) throws {
         let fm = FileManager.default
+        if let sourceURL, sameFile(sourceURL, packageURL), fm.fileExists(atPath: packageURL.path) {
+            let stagingURL = packageURL.deletingLastPathComponent().appendingPathComponent(
+                ".\(packageURL.lastPathComponent).write-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer {
+                if fm.fileExists(atPath: stagingURL.path) {
+                    try? fm.removeItem(at: stagingURL)
+                }
+            }
+            try writeProjectPackageContents(snapshot, to: stagingURL, sourceURL: sourceURL, fm: fm)
+            try beforeSafeReplace?()
+            _ = try fm.replaceItemAt(
+                packageURL,
+                withItemAt: stagingURL,
+                backupItemName: nil,
+                options: []
+            )
+            return
+        }
+        try writeProjectPackageContents(snapshot, to: packageURL, sourceURL: sourceURL, fm: fm)
+    }
+
+    private nonisolated static func writeProjectPackageContents(
+        _ snapshot: ProjectPackageSnapshot,
+        to packageURL: URL,
+        sourceURL: URL?,
+        fm: FileManager
+    ) throws {
         try createPackageDirectory(at: packageURL, fm: fm)
         try snapshot.timeline.write(to: packageURL.appendingPathComponent(Project.timelineFilename), options: .atomic)
         if let manifest = snapshot.manifest {

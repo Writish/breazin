@@ -4,6 +4,7 @@ import SwiftUI
 struct AgentPane: View {
     @Bindable private var appState = AppState.shared
     @State private var provider = AgentProviderConfiguration.selectedProvider
+    @State private var pairedMCPClients: [MCPPairedClient] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxl) {
@@ -14,11 +15,25 @@ struct AgentPane: View {
                 mcpSection
             }
         }
-        .onAppear { provider = AgentProviderConfiguration.selectedProvider }
+        .onAppear {
+            provider = AgentProviderConfiguration.selectedProvider
+            refreshPairedMCPClients()
+        }
     }
 
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            SettingsToggleRow(
+                title: "Allow AI Chat edits",
+                subtitle: "Allows reversible edits to the current project. Paid, upload, import, export, and high-impact actions still ask every time.",
+                isOn: Binding(
+                    get: { ToolCapabilityPolicy.inAppReversibleEditsEnabled },
+                    set: { ToolCapabilityPolicy.inAppReversibleEditsEnabled = $0 }
+                )
+            )
+
+            Divider()
+
             HStack {
                 Text("Chat Provider")
                     .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
@@ -78,25 +93,67 @@ struct AgentPane: View {
             mcpHeader
             mcpStatusRow
             Divider()
-            SettingsToggleRow(
-                title: "Allow reversible edits",
-                subtitle: "Off by default. Paid generation, imports, exports, project settings, deletion, and other high-impact actions still require the Breazin app.",
-                isOn: Binding(
-                    get: { ToolCapabilityPolicy.externalReversibleEditsEnabled },
-                    set: { ToolCapabilityPolicy.externalReversibleEditsEnabled = $0 }
-                )
-            )
             HStack {
-                Text("Access uses a per-installation Keychain token. Rotating it disconnects every paired MCP client.")
+                Text("Pairing creates a separate revocable Keychain-backed token for each MCP client.")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 Spacer()
-                Button("Copy token") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(MCPAccessControl.currentToken(), forType: .string)
+                Button("Copy pairing secret") {
+                    Task {
+                        let secret = await Task.detached { MCPAccessControl.pairingSecret() }.value
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(secret, forType: .string)
+                    }
                 }
-                Button("Rotate token") {
-                    appState.rotateMCPAccessToken()
+                Button("Reset pairing") {
+                    Task {
+                        await appState.resetMCPPairing()
+                        refreshPairedMCPClients()
+                    }
+                }
+            }
+
+            if pairedMCPClients.isEmpty {
+                Text("No paired clients")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            } else {
+                ForEach(pairedMCPClients) { client in
+                    HStack {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                            Text(client.name)
+                                .font(.system(size: AppTheme.FontSize.sm))
+                                .foregroundStyle(AppTheme.Text.primaryColor)
+                            Text(client.lastUsedAt.map { "Last used \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not used yet")
+                                .font(.system(size: AppTheme.FontSize.xs))
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
+                        Spacer()
+                        Toggle(
+                            "Allow edits",
+                            isOn: Binding(
+                                get: { client.capabilities.contains(.editCurrentProject) },
+                                set: { enabled in
+                                    Task {
+                                        await appState.setMCPClientCapability(
+                                            .editCurrentProject,
+                                            enabled: enabled,
+                                            clientID: client.id
+                                        )
+                                        refreshPairedMCPClients()
+                                    }
+                                }
+                            )
+                        )
+                        .toggleStyle(.checkbox)
+                        .help("Allows reversible edits to the current project. Imports, exports, generation, and high-impact actions remain blocked.")
+                        Button("Revoke") {
+                            Task {
+                                await appState.revokeMCPClient(clientID: client.id)
+                                refreshPairedMCPClients()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -171,6 +228,12 @@ struct AgentPane: View {
 
     private func openInstructions() {
         HelpWindowController.shared.show(tab: .mcp)
+    }
+
+    private func refreshPairedMCPClients() {
+        Task {
+            pairedMCPClients = await Task.detached { MCPAccessControl.pairedClients() }.value
+        }
     }
 }
 

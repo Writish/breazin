@@ -46,4 +46,27 @@ struct ToolCapabilityPolicyTests {
         #expect(ToolCapabilityPolicy.level(for: .manageExports, args: ["action": "cancel"]) == .highImpact)
         #expect(ToolCapabilityPolicy.level(for: .manageExports, args: ["action": "list"]) == .readProject)
     }
+
+    @Test func inAppAgentRequiresEditSettingAndPerActionHighRiskApproval() {
+        #expect(ToolCapabilityPolicy.decision(
+            for: .addClips,
+            source: .inAppAgent,
+            inAppReversibleEditsEnabled: false
+        ) == .approvalRequired(reason: "Enable AI Chat reversible edits in Settings > Agent."))
+        #expect(ToolCapabilityPolicy.decision(
+            for: .addClips,
+            source: .inAppAgent,
+            inAppReversibleEditsEnabled: true
+        ) == .allow)
+        #expect(ToolCapabilityPolicy.decision(
+            for: .generateImage,
+            source: .inAppAgent,
+            inAppReversibleEditsEnabled: true
+        ) == .approvalRequired(reason: "This external or paid action needs confirmation in the Breazin app."))
+        #expect(ToolCapabilityPolicy.decision(
+            for: .setProjectSettings,
+            source: .inAppAgent,
+            inAppReversibleEditsEnabled: true
+        ) == .approvalRequired(reason: "This high-impact action always needs confirmation in the Breazin app."))
+    }
 }

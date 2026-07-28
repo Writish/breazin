@@ -318,6 +318,9 @@ struct AgentPanelView: View {
             if !service.canStream && !service.messages.isEmpty {
                 missingKeyState
             }
+            if let approval = service.pendingToolApproval {
+                toolApprovalCard(approval)
+            }
             AgentInputBox(
                 draft: $service.draft,
                 mentions: $service.mentions,
@@ -335,6 +338,32 @@ struct AgentPanelView: View {
         .padding(.top, AppTheme.Spacing.xs)
         .frame(maxWidth: Layout.chatColumnMax)
         .frame(maxWidth: .infinity)
+    }
+
+    private func toolApprovalCard(_ approval: AgentToolApprovalRequest) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+            Text(approval.title)
+                .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            Text(approval.detail)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Deny") { service.denyPendingTool() }
+                    .buttonStyle(.capsule(.secondary))
+                Spacer()
+                Button("Allow once") { service.approvePendingTool() }
+                    .buttonStyle(.capsule(.prominent))
+            }
+        }
+        .padding(AppTheme.Spacing.mdLg)
+        .background(AppTheme.Background.raisedColor)
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
+        }
     }
 
     private func submit() {

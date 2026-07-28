@@ -91,6 +91,7 @@ final class AgentService {
     var messages: [AgentMessage] = []
     var isStreaming: Bool = false
     var streamError: AgentStreamError?
+    var pendingToolApproval: AgentToolApprovalRequest?
     var onSessionsChanged: (@MainActor () -> Void)?
 
     var draft: String = ""
@@ -224,10 +225,15 @@ final class AgentService {
     }
 
     weak var editor: EditorViewModel? {
-        didSet { toolExecutor = editor.map { ToolExecutor(editor: $0) } }
+        didSet {
+            toolExecutor = editor.map {
+                ToolExecutor(editor: $0, enforceInAppCapabilityPolicy: true)
+            }
+        }
     }
     private var toolExecutor: ToolExecutor?
     private var currentTask: Task<Void, Never>?
+    private var toolApprovalContinuation: CheckedContinuation<Bool, Never>?
 
     func loadSessions(from projectURL: URL?) {
         sessions = ChatSessionStore.load(from: projectURL)
@@ -249,6 +255,7 @@ final class AgentService {
     }
 
     func newChat() {
+        resolvePendingToolApproval(approved: false)
         currentTask?.cancel()
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
@@ -268,6 +275,7 @@ final class AgentService {
 
     func selectSession(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        resolvePendingToolApproval(approved: false)
         currentTask?.cancel()
         syncMessagesIntoCurrentSession()
         if !sessions[idx].isOpen {
@@ -346,9 +354,51 @@ final class AgentService {
     }
 
     func cancel() {
+        resolvePendingToolApproval(approved: false)
         currentTask?.cancel()
         currentTask = nil
         isStreaming = false
+    }
+
+    func approvePendingTool() {
+        resolvePendingToolApproval(approved: true)
+    }
+
+    func denyPendingTool() {
+        resolvePendingToolApproval(approved: false)
+    }
+
+    private func resolvePendingToolApproval(approved: Bool) {
+        let continuation = toolApprovalContinuation
+        toolApprovalContinuation = nil
+        pendingToolApproval = nil
+        continuation?.resume(returning: approved)
+    }
+
+    func requestToolApproval(
+        id: String,
+        tool: ToolName,
+        level: ToolCapabilityLevel
+    ) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                pendingToolApproval = AgentToolApprovalRequest(
+                    id: id,
+                    toolName: tool.rawValue,
+                    level: level
+                )
+                toolApprovalContinuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.resolvePendingToolApproval(approved: false)
+            }
+        }
     }
 
     private func kickOffStream() {
@@ -461,7 +511,27 @@ final class AgentService {
                 resultBlocks.append(.toolResult(toolUseId: use.id, content: [.text("Cancelled")], isError: true))
                 continue
             }
-            let result = await executor.execute(name: use.name, args: Self.parseJSONObject(use.input))
+            let args = Self.parseJSONObject(use.input)
+            var approved = false
+            if let tool = ToolName(rawValue: use.name) {
+                let level = ToolCapabilityPolicy.level(for: tool, args: args)
+                if level >= .externalOrPaid {
+                    approved = await requestToolApproval(id: use.id, tool: tool, level: level)
+                    if !approved {
+                        resultBlocks.append(.toolResult(
+                            toolUseId: use.id,
+                            content: [.text("User declined or cancelled the required approval.")],
+                            isError: true
+                        ))
+                        continue
+                    }
+                }
+            }
+            let result = await executor.execute(
+                name: use.name,
+                args: args,
+                approvedByUser: approved
+            )
             resultBlocks.append(.toolResult(toolUseId: use.id, content: result.content, isError: result.isError))
         }
         if !resultBlocks.isEmpty {

@@ -70,8 +70,34 @@ final class AppState {
         }
     }
 
-    func rotateMCPAccessToken() {
-        _ = MCPAccessControl.rotateToken()
+    func resetMCPPairing() async {
+        _ = await Task.detached(priority: .utility) {
+            MCPAccessControl.resetPairing()
+        }.value
+        guard MCPService.isEnabledPreference else { return }
+        stopMCPService()
+        startMCPService()
+    }
+
+    func setMCPClientCapability(
+        _ capability: MCPClientCapability,
+        enabled: Bool,
+        clientID: String
+    ) async {
+        let changed = await Task.detached(priority: .utility) {
+            MCPAccessControl.setCapability(capability, enabled: enabled, clientID: clientID)
+        }.value
+        if changed { restartMCPServiceIfEnabled() }
+    }
+
+    func revokeMCPClient(clientID: String) async {
+        let changed = await Task.detached(priority: .utility) {
+            MCPAccessControl.revoke(clientID: clientID)
+        }.value
+        if changed { restartMCPServiceIfEnabled() }
+    }
+
+    private func restartMCPServiceIfEnabled() {
         guard MCPService.isEnabledPreference else { return }
         stopMCPService()
         startMCPService()

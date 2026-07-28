@@ -33,8 +33,12 @@ final class MCPService {
     }
 
     func start() {
-        let httpServer = MCPHTTPServer(port: Self.port, accessToken: MCPAccessControl.currentToken()) { [self] in
-            let toolExecutor = await makeSessionToolExecutor()
+        let httpServer = MCPHTTPServer(
+            port: Self.port,
+            authenticate: MCPAccessControl.authenticateClient,
+            pairClient: MCPAccessControl.pair
+        ) { [self] client in
+            let toolExecutor = await makeSessionToolExecutor(client: client)
             let server = Server(
                 name: AppConfiguration.current.mcpServiceName,
                 version: "1.0.0",
@@ -63,8 +67,12 @@ final class MCPService {
         }
     }
 
-    func makeSessionToolExecutor() -> ToolExecutor {
-        ToolExecutor(projectProvider: projectProvider)
+    func makeSessionToolExecutor(client: MCPPairedClient? = nil) -> ToolExecutor {
+        ToolExecutor(
+            projectProvider: projectProvider,
+            externalReversibleEditsEnabled: client?.capabilities.contains(.editCurrentProject) == true,
+            externalClientID: client?.id
+        )
     }
 
     func stop() {
