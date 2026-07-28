@@ -41,7 +41,10 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - Project persistence now writes explicit root schema `1` and manifest schema `2`, migrates unversioned/older documents in memory, rejects future schemas before document mutation, and creates one idempotent sibling backup before the first in-place write of a migrated package. In-place saves stage a complete sibling package and replace only after preparation succeeds; injected interruption and out-of-space failures preserve the original. An anonymous golden package encoded by the pinned upstream `v0.6.13` tag verifies timeline/media semantics, offline media, backup bytes, and repeated-save idempotency.
 - The Upload Broker replaces its global bootstrap secret with an operator-managed registry of per-user/device credential digests. The client sends a stable Keychain device ID, upload handles and R2 object prefixes bind the opaque subject/device, and cross-device complete/refresh/delete attempts fail. Presigned PUTs now include R2's SHA-256 checksum header, and `complete` compares the checksum retained by R2 rather than trusting client-authored metadata alone. Worker version `319267f7-014a-45e2-b6d9-82582592d43d` (source tag `platform-84f64ac`) is deployed at 100% in staging by deployment `567a76e3-82d7-44e5-b7db-416656ab58d6`, with the five required secrets and no active `BROKER_TOKEN` binding. Live health, unauthenticated rejection, binding inspection, and the `tmp/` two-day lifecycle rule passed. The authenticated standalone object-byte/refresh/delete harness still awaits a local Keychain read after the Mac is unlocked and is not claimed as passed.
 
-See `docs/development/phase-2-acceptance.md` for the evidence matrix and operator steps.
+See `docs/development/phase-2-acceptance.md`,
+`docs/development/phase-3-acceptance.md`, and
+`docs/development/external-beta-security-acceptance.md` for the evidence
+matrices and operator steps.
 
 ## Deliberately pending after strict Phase 2
 
