@@ -8,6 +8,7 @@ struct ProjectPackageContents: Sendable {
     var manifest: MediaManifest?
     var generationLog: GenerationLog?
     var manifestUnreadable: Bool = false
+    var requiresMigrationBackup: Bool = false
 }
 
 struct ProjectPackageSnapshot: Sendable {
@@ -38,6 +39,7 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var loadedProjectFile: ProjectFile?
     private nonisolated(unsafe) var loadedManifest: MediaManifest?
     private nonisolated(unsafe) var loadedGenerationLog: GenerationLog?
+    private nonisolated(unsafe) var requiresMigrationBackup = false
 
     /// Set when media.json existed but failed to decode, so saves preserve it instead of clobbering.
     private nonisolated(unsafe) var manifestLoadFailed = false
@@ -81,6 +83,7 @@ final class VideoProject: NSDocument {
         loadedManifest = contents.manifest
         loadedGenerationLog = contents.generationLog
         manifestLoadFailed = contents.manifestUnreadable
+        requiresMigrationBackup = contents.requiresMigrationBackup
         let timelines = loadedProjectFile?.timelines ?? []
         Log.project.notice(
             "read ok timelines=\(timelines.count)",
@@ -97,6 +100,7 @@ final class VideoProject: NSDocument {
 
     nonisolated static func readProjectPackage(at url: URL) throws -> ProjectPackageContents {
         let data = try requiredData(Project.timelineFilename, in: url)
+        let projectSchemaVersion = schemaVersion(in: data, key: "schemaVersion")
         let projectFile: ProjectFile
         do {
             projectFile = try ProjectFile.decode(data)
@@ -107,11 +111,16 @@ final class VideoProject: NSDocument {
 
         let manifest: MediaManifest?
         let manifestUnreadable: Bool
+        let manifestSchemaVersion: Int?
         if let manifestData = try optionalData(Project.manifestFilename, in: url) {
-            if let decoded = try? JSONDecoder().decode(MediaManifest.self, from: manifestData) {
+            manifestSchemaVersion = schemaVersion(in: manifestData, key: "version") ?? 1
+            do {
+                let decoded = try JSONDecoder().decode(MediaManifest.self, from: manifestData)
                 manifest = decoded
                 manifestUnreadable = false
-            } else {
+            } catch let error as ProjectSchemaError {
+                throw error
+            } catch {
                 // A bad manifest must not lose the project; degrade to "media offline" and keep the file for recovery.
                 Log.project.error("read manifest decode failed bytes=\(manifestData.count); opening with empty manifest")
                 manifest = nil
@@ -120,6 +129,7 @@ final class VideoProject: NSDocument {
         } else {
             manifest = nil
             manifestUnreadable = false
+            manifestSchemaVersion = nil
         }
 
         let generationLog = try optionalData(Project.generationLogFilename, in: url)
@@ -129,7 +139,9 @@ final class VideoProject: NSDocument {
             projectFile: projectFile,
             manifest: manifest,
             generationLog: generationLog,
-            manifestUnreadable: manifestUnreadable
+            manifestUnreadable: manifestUnreadable,
+            requiresMigrationBackup: projectSchemaVersion != ProjectFile.currentSchemaVersion
+                || (manifestSchemaVersion ?? MediaManifest.currentSchemaVersion) != MediaManifest.currentSchemaVersion
         )
     }
 
@@ -224,6 +236,11 @@ final class VideoProject: NSDocument {
             throw CocoaError(.fileWriteUnknown)
         }
 
+        if requiresMigrationBackup, let sourceURL, Self.sameFile(sourceURL, url) {
+            try Self.createMigrationBackupIfNeeded(for: sourceURL)
+            requiresMigrationBackup = false
+        }
+
         try Self.writeProjectPackage(
             ProjectPackageSnapshot(
                 timeline: data,
@@ -272,6 +289,25 @@ final class VideoProject: NSDocument {
         let url = packageURL.appendingPathComponent(name, isDirectory: false)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try Data(contentsOf: url, options: [.mappedIfSafe])
+    }
+
+    private nonisolated static func schemaVersion(in data: Data, key: String) -> Int? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object[key] as? Int
+    }
+
+    nonisolated static func migrationBackupURL(for packageURL: URL) -> URL {
+        packageURL.deletingLastPathComponent().appendingPathComponent(
+            "\(packageURL.deletingPathExtension().lastPathComponent).pre-schema-\(ProjectFile.currentSchemaVersion).backup.\(packageURL.pathExtension)",
+            isDirectory: true
+        )
+    }
+
+    private nonisolated static func createMigrationBackupIfNeeded(for packageURL: URL) throws {
+        let backupURL = migrationBackupURL(for: packageURL)
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: backupURL.path) else { return }
+        try fm.copyItem(at: packageURL, to: backupURL)
     }
 
     nonisolated static func writeProjectPackage(_ snapshot: ProjectPackageSnapshot, to packageURL: URL, sourceURL: URL?) throws {

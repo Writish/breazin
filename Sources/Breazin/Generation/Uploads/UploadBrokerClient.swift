@@ -46,6 +46,7 @@ protocol UploadBrokerServing: Sendable {
 actor UploadBrokerClient: UploadBrokerServing {
     private let baseURL: URL
     private let token: String
+    private let deviceID: String
     private let session: URLSession
     private let encoder = JSONEncoder()
     private let decoder: JSONDecoder
@@ -53,11 +54,13 @@ actor UploadBrokerClient: UploadBrokerServing {
     init(
         baseURL: URL = AppConfiguration.current.uploadBrokerBaseURL,
         token: String? = ProviderCredentialStore.loadUploadBrokerToken(),
+        deviceID: String = ProviderCredentialStore.uploadBrokerDeviceID(),
         session: URLSession = .shared
     ) throws {
         guard let token, !token.isEmpty else { throw UploadBrokerError.missingCredential }
         self.baseURL = baseURL
         self.token = token
+        self.deviceID = deviceID
         self.session = session
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -150,6 +153,7 @@ actor UploadBrokerClient: UploadBrokerServing {
         request.httpMethod = method
         request.httpBody = try encoder.encode(body)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(deviceID, forHTTPHeaderField: "X-Breazin-Device-ID")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)

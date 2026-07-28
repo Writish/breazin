@@ -13,7 +13,7 @@ Recorded 2026-07-23 and updated 2026-07-28. This record separates deterministic 
 | Volcengine request contracts | Passed locally | Seedream synchronous image and Seedance asynchronous video request mapping, content roles, polling states, cancellation, expiry, and safe remote errors are automated against fixtures. |
 | Provider status observability | Passed locally | Seedance single-task and multi-task status queries, provider timestamps, queued/running/succeeded/failed/cancelled mapping, output metadata, Token usage, SQLite v3 persistence, AI Chat status receipts, and native result links are automated. `needs_attention` is actionable but not actively processing, so it no longer renders an endless spinner. A task-status query timeout remains a transient refresh error. |
 | Seedream synchronous timeout | Passed locally and superseded by a successful live retry | Beta evidence showed the former URLSession default ending the synchronous request after about 63 seconds without an HTTP response, task ID, result URL, or usage. Seedream now waits up to five minutes. If that response also times out, the local job becomes terminal `failed`, temporary references are cleaned, and the UI warns that Ark may still have processed the request because there is no task ID to query or cancel. Legacy matching `needs_attention` rows are closed on launch without resubmission. |
-| Upload Broker handler contracts | Passed locally | Health, missing/wrong authentication, presigned URL generation, R2 object metadata/size validation, complete, refresh, delete, missing object, expired handle, tampered handle, and lifecycle JSON are automated. |
+| Upload Broker handler contracts | Passed locally | Health, missing/wrong per-device authentication, subject/device handle binding, cross-device rejection, presigned URL generation, R2 object metadata/size validation, complete, refresh, delete, missing object, expired handle, tampered handle, and lifecycle JSON are automated. |
 | Cloudflare staging resources | Partially verified live | Wrangler authentication, three R2 buckets, staging deployment, required secret names, staging health `200`, unauthenticated upload `401`, and active `tmp/` two-day lifecycle rule were checked against the Cloudflare account. |
 | Authenticated staging client flow | Partially verified live | A Beta Seedance run reserved an upload, completed an authenticated presigned JPEG `PUT`, submitted the resulting reference, and deleted the bound upload after terminal success. The standalone acceptance harness, explicit byte read, URL refresh, and real-time expiry remain unverified; the local acceptance-only Worker revision remains undeployed. |
 | Seedance paid generation | Passed once in Beta | On 2026-07-23 the operator completed one Seedance 2.0 image-reference video generation. SQLite recorded a provider task ID, one result URL, terminal `succeeded`, and deleted reference-upload state, which implies submit → status polling → download/project finalization → cleanup completed. This is one operator-observed flow, not a latency or reliability benchmark. |
@@ -132,7 +132,7 @@ Wrangler dry-run proves only that the local Worker bundle is buildable. It is no
 
 Manual configuration stays in `platform/upload-broker/wrangler.jsonc` for bucket bindings and custom domains, in Worker secrets for R2 credentials and Broker secrets, and in the untracked `.dev.vars` file for local development. Do not put long-lived R2 credentials in the macOS client.
 
-1. Review `breazin-temp-staging`, `uploads-staging.breazin.com`, the five staging secret names, and `config/r2-lifecycle.json`.
+1. Review `breazin-temp-staging`, `uploads-staging.breazin.com`, the five staging secret names, and `config/r2-lifecycle.json`. Replace the old `BROKER_TOKEN` secret with `BROKER_DEVICE_CREDENTIALS`, containing one opaque subject/device record and SHA-256 token digest per authorized Beta installation. Record the client device ID shown by the Beta build; do not use an email address as the subject.
 2. Deploy the reviewed local revision with `npm run deploy:staging`.
 3. Reapply or verify the lifecycle rule:
 
@@ -141,13 +141,15 @@ Manual configuration stays in `platform/upload-broker/wrangler.jsonc` for bucket
    npm run verify:staging:lifecycle
    ```
 
-4. Supply the staging Broker token only to the current shell, run the destructive-to-fixture acceptance, then clear it:
+4. Supply one registered device's plaintext staging credential and matching device ID only to the current shell, run the destructive-to-fixture acceptance, then clear them:
 
    ```bash
    read -s BREAZIN_UPLOAD_BROKER_TOKEN
    export BREAZIN_UPLOAD_BROKER_TOKEN
+   read BREAZIN_UPLOAD_BROKER_DEVICE_ID
+   export BREAZIN_UPLOAD_BROKER_DEVICE_ID
    npm run accept:staging
-   unset BREAZIN_UPLOAD_BROKER_TOKEN
+   unset BREAZIN_UPLOAD_BROKER_TOKEN BREAZIN_UPLOAD_BROKER_DEVICE_ID
    ```
 
 The harness creates a unique tiny PNG object, validates authenticated upload and download bytes, refreshes the GET URL, deletes the object in `finally`, and verifies refresh returns `404` after deletion. Handle expiry is deterministic in local tests. A real-time expiry exercise should use an isolated short-TTL staging deployment or wait for the configured interval; do not weaken production TTLs.

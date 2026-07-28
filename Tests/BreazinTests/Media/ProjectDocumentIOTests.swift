@@ -37,6 +37,28 @@ struct ProjectDocumentIOTests {
         #expect(fm.fileExists(atPath: destination.appendingPathComponent(Project.manifestFilename).path))
     }
 
+    @Test func legacyPackageIsBackedUpOnceBeforeFirstInPlaceWrite() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("pp-doc-migration-\(UUID().uuidString)", isDirectory: true)
+        let package = root.appendingPathComponent("Legacy.breazin", isDirectory: true)
+        try makePackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+
+        let legacy = try JSONEncoder().encode(Fixtures.timeline())
+        try legacy.write(to: package.appendingPathComponent(Project.timelineFilename))
+        let doc = VideoProject()
+        doc.fileURL = package
+        doc.fileType = VideoProject.typeIdentifier
+        try doc.read(from: package, ofType: VideoProject.typeIdentifier)
+
+        try doc.write(to: package, ofType: VideoProject.typeIdentifier)
+        let backup = VideoProject.migrationBackupURL(for: package)
+        #expect(fm.fileExists(atPath: backup.path))
+        #expect(try Data(contentsOf: backup.appendingPathComponent(Project.timelineFilename)) == legacy)
+
+        try doc.write(to: package, ofType: VideoProject.typeIdentifier)
+        #expect(try Data(contentsOf: backup.appendingPathComponent(Project.timelineFilename)) == legacy)
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)

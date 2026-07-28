@@ -122,7 +122,7 @@ struct ProvidersPane: View {
                             Text("Breazin upload Broker")
                                 .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
                                 .foregroundStyle(AppTheme.Text.primaryColor)
-                            Text("Uploads standardized reference media directly to temporary R2 storage. The Broker never receives provider API keys or generation requests.")
+                            Text("Uploads standardized reference media directly to temporary R2 storage. This credential is bound to this Breazin installation; the Broker never receives provider API keys or generation requests.")
                                 .font(.system(size: AppTheme.FontSize.sm))
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
@@ -165,6 +165,24 @@ struct ProvidersPane: View {
                     Text("The token is stored in the macOS Keychain. R2 Access Key and Secret stay in Cloudflare Worker secrets.")
                         .font(.system(size: AppTheme.FontSize.sm))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
+
+                    HStack {
+                        Text("Device ID")
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        Text(ProviderCredentialStore.uploadBrokerDeviceID())
+                            .font(.system(size: AppTheme.FontSize.xs, design: .monospaced))
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                                ProviderCredentialStore.uploadBrokerDeviceID(),
+                                forType: .string
+                            )
+                        }
+                    }
                 }
             }
 

@@ -121,6 +121,48 @@ struct ProjectRoundTripTests {
 
     // MARK: - Legacy / tolerant decode
 
+    @Test func projectRootWritesExplicitCurrentSchema() throws {
+        let project = ProjectFile(timelines: [Fixtures.timeline()])
+        let data = try JSONEncoder().encode(project)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(object["schemaVersion"] as? Int == ProjectFile.currentSchemaVersion)
+        #expect(try ProjectFile.decode(data).schemaVersion == ProjectFile.currentSchemaVersion)
+    }
+
+    @Test func unversionedProjectRootMigratesInMemory() throws {
+        let timelineData = try JSONEncoder().encode(Fixtures.timeline())
+        let timelineObject = try JSONSerialization.jsonObject(with: timelineData)
+        let data = try JSONSerialization.data(withJSONObject: ["timelines": [timelineObject]])
+
+        let decoded = try ProjectFile.decode(data)
+
+        #expect(decoded.schemaVersion == ProjectFile.currentSchemaVersion)
+        #expect(decoded.timelines.count == 1)
+    }
+
+    @Test func futureProjectRootIsRejectedWithoutLegacyFallback() throws {
+        let data = Data(#"{"schemaVersion":999,"timelines":[]}"#.utf8)
+
+        #expect(throws: ProjectSchemaError.unsupportedProjectVersion(
+            found: 999,
+            supported: ProjectFile.currentSchemaVersion
+        )) {
+            try ProjectFile.decode(data)
+        }
+    }
+
+    @Test func futureManifestIsRejected() {
+        let data = Data(#"{"version":999,"entries":[],"folders":[]}"#.utf8)
+
+        #expect(throws: ProjectSchemaError.unsupportedManifestVersion(
+            found: 999,
+            supported: MediaManifest.currentSchemaVersion
+        )) {
+            try JSONDecoder().decode(MediaManifest.self, from: data)
+        }
+    }
+
     @Test func trackMissingMutedFieldDecodesAsFalse() throws {
         // Older projects didn't have muted/hidden/syncLocked. They must decode with defaults.
         let json = """
@@ -283,12 +325,12 @@ struct ProjectRoundTripTests {
         #expect(try roundTrip(manifest) == manifest)
     }
 
-    @Test func mediaManifestMissingVersionDecodesAsVersionOne() throws {
+    @Test func mediaManifestMissingVersionMigratesToCurrentInMemory() throws {
         let json = """
         { "entries": [], "folders": [] }
         """
         let manifest = try JSONDecoder().decode(MediaManifest.self, from: Data(json.utf8))
-        #expect(manifest.version == 1)
+        #expect(manifest.version == MediaManifest.currentSchemaVersion)
     }
 
     @Test func mediaManifestMissingEntriesAndFoldersDecodesAsEmpty() throws {

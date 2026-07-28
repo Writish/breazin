@@ -77,6 +77,28 @@ struct AgentPane: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             mcpHeader
             mcpStatusRow
+            Divider()
+            SettingsToggleRow(
+                title: "Allow reversible edits",
+                subtitle: "Off by default. Paid generation, imports, exports, project settings, deletion, and other high-impact actions still require the Breazin app.",
+                isOn: Binding(
+                    get: { ToolCapabilityPolicy.externalReversibleEditsEnabled },
+                    set: { ToolCapabilityPolicy.externalReversibleEditsEnabled = $0 }
+                )
+            )
+            HStack {
+                Text("Access uses a per-installation Keychain token. Rotating it disconnects every paired MCP client.")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                Spacer()
+                Button("Copy token") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(MCPAccessControl.currentToken(), forType: .string)
+                }
+                Button("Rotate token") {
+                    appState.rotateMCPAccessToken()
+                }
+            }
         }
     }
 

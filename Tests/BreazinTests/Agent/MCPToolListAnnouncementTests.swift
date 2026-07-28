@@ -10,7 +10,8 @@ struct MCPToolListAnnouncementTests {
 
     @Test func sessionAnnouncesToolListChangedOnceOnGetStreamAttach() async throws {
         let port = UInt16.random(in: 49_500...64_000)
-        let server = MCPHTTPServer(port: port) {
+        let token = "test-installation-token-that-is-long-enough"
+        let server = MCPHTTPServer(port: port, accessToken: token) {
             let server = Server(
                 name: "test",
                 version: "1.0.0",
@@ -27,6 +28,7 @@ struct MCPToolListAnnouncementTests {
         initialize.httpMethod = "POST"
         initialize.setValue("application/json", forHTTPHeaderField: "Content-Type")
         initialize.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        initialize.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         initialize.httpBody = Data(
             #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#
                 .utf8)
@@ -40,6 +42,7 @@ struct MCPToolListAnnouncementTests {
         get.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         get.setValue(sessionID, forHTTPHeaderField: "Mcp-Session-Id")
         get.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version")
+        get.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         let (stream, getResponse) = try await URLSession.shared.bytes(for: get)
         #expect((getResponse as? HTTPURLResponse)?.statusCode == 200)
@@ -56,6 +59,7 @@ struct MCPToolListAnnouncementTests {
         list.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
         list.setValue(sessionID, forHTTPHeaderField: "Mcp-Session-Id")
         list.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version")
+        list.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         list.httpBody = Data(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.utf8)
         _ = try await URLSession.shared.data(for: list)
 

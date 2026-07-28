@@ -70,6 +70,13 @@ final class AppState {
         }
     }
 
+    func rotateMCPAccessToken() {
+        _ = MCPAccessControl.rotateToken()
+        guard MCPService.isEnabledPreference else { return }
+        stopMCPService()
+        startMCPService()
+    }
+
     func showHome() {
         guard let project = activeProject else {
             HomeWindowController.shared.showWindow(nil)

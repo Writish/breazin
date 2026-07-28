@@ -5,6 +5,7 @@ struct MCPInstructionsPane: View {
     @State private var claudeInstallError: String?
 
     private var mcpEndpoint: String { "http://127.0.0.1:\(MCPService.port)/mcp" }
+    private var authorizationHeader: String { "Authorization: Bearer \(MCPAccessControl.currentToken())" }
     private var mcpServiceName: String { AppConfiguration.current.mcpServiceName }
 
     private var claudeCodeCommand: String {
@@ -47,6 +48,18 @@ struct MCPInstructionsPane: View {
 
                 SettingsGroup(title: "Server URL") {
                     endpointRow
+                }
+
+                SettingsGroup(title: "Authentication header") {
+                    CodeBlockView(
+                        content: authorizationHeader,
+                        fontSize: AppTheme.FontSize.sm,
+                        foreground: AppTheme.Text.primaryColor,
+                        verticalPadding: AppTheme.Spacing.smMd
+                    )
+                    Text("Keep this installation token private. Add it as an HTTP header in the MCP client; rotate it from Settings > Agent to revoke every existing client.")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
 
                 SettingsGroup(title: "Connect an agent") {

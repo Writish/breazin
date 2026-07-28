@@ -33,7 +33,7 @@ final class MCPService {
     }
 
     func start() {
-        let httpServer = MCPHTTPServer(port: Self.port) { [self] in
+        let httpServer = MCPHTTPServer(port: Self.port, accessToken: MCPAccessControl.currentToken()) { [self] in
             let toolExecutor = await makeSessionToolExecutor()
             let server = Server(
                 name: AppConfiguration.current.mcpServiceName,

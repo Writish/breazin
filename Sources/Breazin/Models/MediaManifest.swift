@@ -1,13 +1,22 @@
 import Foundation
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    var version: Int = 2
+    static let currentSchemaVersion = 2
+
+    var version: Int = currentSchemaVersion
     var entries: [MediaManifestEntry] = []
     var folders: [MediaFolder] = []
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        guard version <= Self.currentSchemaVersion else {
+            throw ProjectSchemaError.unsupportedManifestVersion(
+                found: version,
+                supported: Self.currentSchemaVersion
+            )
+        }
+        version = Self.currentSchemaVersion
         entries = try c.decodeIfPresent([MediaManifestEntry].self, forKey: .entries) ?? []
         folders = try c.decodeIfPresent([MediaFolder].self, forKey: .folders) ?? []
     }

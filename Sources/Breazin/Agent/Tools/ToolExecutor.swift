@@ -81,6 +81,20 @@ final class ToolExecutor {
         }
         activateMCPSessionIfNeeded(source: source, toolName: tool.rawValue)
 
+        // Only project-provider executors are externally reachable. Several
+        // in-process test and preview adapters intentionally exercise MCP wire
+        // encoding with an editor-owned executor.
+        let policySource: ToolPolicySource =
+            source == "mcp" && frontmostProjectProvider != nil ? .externalMCP : .inAppAgent
+        switch ToolCapabilityPolicy.decision(for: tool, args: args, source: policySource) {
+        case .allow:
+            break
+        case .approvalRequired(let reason):
+            return .error("Approval required: \(reason)")
+        case .deny(let reason):
+            return .error("Capability denied: \(reason)")
+        }
+
         // project tools act on AppState before editor is available
         switch tool {
         case .manageProject:

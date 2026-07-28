@@ -2,6 +2,7 @@ import Foundation
 
 enum ProviderCredentialStore {
     static let uploadBrokerAccount = "upload-broker.access-token"
+    static let uploadBrokerDeviceIDAccount = "upload-broker.device-id"
     static func account(for providerID: ProviderID) -> String {
         "provider.\(providerID.rawValue).api-key"
     }
@@ -30,9 +31,20 @@ enum ProviderCredentialStore {
         KeychainStore.delete(account: uploadBrokerAccount)
     }
 
+    static func uploadBrokerDeviceID() -> String {
+        if let existing = KeychainStore.load(account: uploadBrokerDeviceIDAccount),
+           !existing.isEmpty {
+            return existing
+        }
+        let deviceID = UUID().uuidString.lowercased()
+        KeychainStore.save(deviceID, account: uploadBrokerDeviceIDAccount)
+        return deviceID
+    }
+
     static func preloadForLaunch() {
         _ = loadAPIKey(for: ProviderModelCatalog.volcengineArk)
         _ = loadAPIKey(for: TranscriptionProviderCatalog.openAI)
         _ = loadUploadBrokerToken()
+        _ = uploadBrokerDeviceID()
     }
 }

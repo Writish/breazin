@@ -11,6 +11,7 @@ struct MCPServerInstance: Sendable {
 actor MCPHTTPServer {
 
     private let port: UInt16
+    private let accessToken: String
     private let makeServer: @Sendable () async -> MCPServerInstance
     private nonisolated(unsafe) var listener: NWListener?
 
@@ -22,15 +23,16 @@ actor MCPHTTPServer {
     }
 
     private var sessions: [String: Session] = [:]
-    private var fallback: (server: Server, transport: StatelessHTTPServerTransport)?
-    private static let sessionIdleLimit: Duration = .seconds(3600)
-    private static let sessionCountLimit = 32
+    private static let sessionIdleLimit: Duration = .seconds(900)
+    private static let sessionCountLimit = 4
 
     init(
         port: UInt16,
+        accessToken: String,
         makeServer: @escaping @Sendable () async -> MCPServerInstance
     ) {
         self.port = port
+        self.accessToken = accessToken
         self.makeServer = makeServer
     }
 
@@ -60,11 +62,8 @@ actor MCPHTTPServer {
         listener = nil
         let closing = sessions.values.map(\.transport)
         sessions.removeAll()
-        let fallbackTransport = fallback?.transport
-        fallback = nil
         Task {
             for transport in closing { await transport.disconnect() }
-            await fallbackTransport?.disconnect()
         }
     }
 
@@ -100,9 +99,9 @@ actor MCPHTTPServer {
     private enum Framing { case needMoreData, complete, invalid }
 
     private nonisolated func framing(of data: Data) -> Framing {
-        guard data.count <= 16_777_216 else { return .invalid }
+        guard data.count <= 2_097_152 else { return .invalid }
         guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else {
-            return data.count > 65_536 ? .invalid : .needMoreData
+            return data.count > 32_768 ? .invalid : .needMoreData
         }
         guard let head = String(data: data[data.startIndex..<headerEnd.lowerBound], encoding: .utf8) else {
             return .invalid
@@ -120,6 +119,18 @@ actor MCPHTTPServer {
     // MARK: - Routing
 
     private func handle(request: HTTPRequest, connection: NWConnection) async {
+        guard MCPAccessControl.authorized(
+            header: request.header("Authorization"),
+            expectedToken: accessToken
+        ) else {
+            sendRaw(
+                "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\n\r\n",
+                on: connection,
+                keepAlive: false
+            )
+            return
+        }
+
         if request.path == "/.well-known/oauth-protected-resource" {
             let body = "{\"resource\":\"http://127.0.0.1:\(port)\"}"
             sendRaw("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)", on: connection, keepAlive: true)
@@ -166,8 +177,11 @@ actor MCPHTTPServer {
                 await transport.disconnect()
             }
         } else {
-            // Sessionless clients (and plain curl) get simple request/response semantics.
-            response = await fallbackPair().transport.handleRequest(request)
+            // No sessionless fallback: every client must initialize and present
+            // the assigned session id on subsequent requests.
+            sendRaw("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", on: connection, keepAlive: true)
+            receive(on: connection)
+            return
         }
         writeResponse(response, on: connection)
     }
@@ -202,18 +216,6 @@ actor MCPHTTPServer {
 
     private nonisolated func baseValidators() -> [any HTTPRequestValidator] {
         [OriginValidator.localhost(port: Int(port)), ContentTypeValidator(), ProtocolVersionValidator()]
-    }
-
-    private func fallbackPair() async -> (server: Server, transport: StatelessHTTPServerTransport) {
-        if let fallback { return fallback }
-        let pipeline = StandardValidationPipeline(validators: baseValidators())
-        let instance = await makeServer()
-        let pair = (server: instance.server, transport: StatelessHTTPServerTransport(validationPipeline: pipeline))
-        try? await pair.server.start(transport: pair.transport) { clientInfo, _ in
-            await instance.onInitialize(clientInfo)
-        }
-        fallback = pair
-        return pair
     }
 
     // Evicted clients recover transparently: their next request gets 404 and they re-initialize.
@@ -303,7 +305,7 @@ actor MCPHTTPServer {
 
     private nonisolated func statusText(_ code: Int) -> String {
         switch code {
-        case 200: "OK"; case 202: "Accepted"; case 400: "Bad Request"
+        case 200: "OK"; case 202: "Accepted"; case 400: "Bad Request"; case 401: "Unauthorized"
         case 404: "Not Found"; case 405: "Method Not Allowed"; case 409: "Conflict"
         case 500: "Internal Server Error"
         default: "Unknown"
