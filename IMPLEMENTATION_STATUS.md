@@ -77,14 +77,16 @@ matrices and operator steps.
 - Additional production evidence: a wall-clock short-TTL expiry drill, live cancellation-near-completion drill, and stricter unopened-project staging observation remain useful live exercises. They are not represented as completed and do not replace the deterministic Phase 2 contracts.
 - External-Beta hardening still requires manual MCP pairing/approval UI acceptance and the release signing/notarization gates in `docs/development/external-beta-security-acceptance.md`. Seedance task-status query timeout remains a non-terminal refresh error because Volcengine does not define `timeout` as a task terminal state; Seedream's synchronous response timeout is a separate terminal local condition because no queryable provider task ID exists.
 - OpenAI GPT Image 2 (OAuth route) and Midjourney (Discord bot route) are represented as unimplemented authentication/provider contracts only; neither integration is presented as working.
-- The Development feedback/evaluation control plane, D1, private R2, Zero Trust Free Access application/policy, custom domain, and Access login are deployed. D1 migration `0007` and Worker version `4e137dbf-f8be-4e84-81c8-1a39c429e989` now reject release-eligible quality reports unless they bind stored signed-build evidence and the accepted Calibration/Quality Policy review evidence. The independent GitHub consumer is also deployed. The real token → feedback leg has passed and is intentionally stopped at one pending human decision; approval → immutable packet → Issue remains unclaimed.
+- The Development feedback/evaluation control plane, D1, private R2, Zero Trust Free Access application/policy, custom domain, and Access login are deployed. D1 migrations `0001`–`0008` are applied and source commit `479f57c` is deployed as Worker version `6640d272-ae5b-4abe-beb4-f8f58bf257a8`. Release-eligible quality reports must bind stored signed-build evidence, accepted Calibration/Quality Policy review evidence, and 1–99 real evaluation-manifest evidence records matching the same Change, candidate commit, DMG SHA, scenario count, and hard gates. The independent GitHub consumer is also deployed. The real token → feedback leg has passed and is intentionally stopped at one pending human decision; approval → immutable packet → Issue remains unclaimed.
 - `CHG-0001` now has fresh immutable baseline/candidate replay evidence. Those evidence envelopes pass the local provenance and trace contract; they still need promotion into the deployed development evidence store.
 - Phase 4 release automation now has a non-publishing signed-build workflow and
   executable provenance contract. The PR body now carries the truthful
   CHG-0001 evidence boundary and all four delivery-authority declarations.
-  Commits `6383b83` and `41722c7` are pushed; fresh run `30544063266` passed
+  Commits `6383b83`, `41722c7`, and status follow-up `4b5b78f` are pushed;
+  latest run `30544574746` passed
   Change Contract, Dependency Review, Release Build Contract, and complete
-  Build & Test with app assembly and bundle smoke. Running the manual release workflow still
+  Build & Test with 1,238 tests / 189 suites, app assembly, and bundle smoke.
+  Running the manual release workflow still
   requires the protected
   Developer ID certificate/team identity, Apple notarization API credential,
   and Sparkle key pair; final exact-hash quality binding and promotion remain
