@@ -32,6 +32,14 @@ quality report to the exact DMG hash; Calibration and Quality Policy must be
 accepted; release governance must finalize the manifest; and a separate
 protected human promotion approval must still update the channel metadata.
 
+`scripts/ci/release-promotion.mjs` implements the final local consumer
+contract without publishing. It rejects cross-channel identities, changed
+candidate/report/DMG bytes, non-monotonic Sparkle build numbers, mutable or
+`latest` URLs, and a candidate that claims its own publication authority. Its
+`prepare` result still records `publicationAuthorized=false`; the actual
+GitHub Environment approval is a separate receipt. `appcast` renders a new
+file and never edits the checked-in feed in place.
+
 Required environment secrets:
 
 - `DEVELOPER_ID_APPLICATION_P12_BASE64`

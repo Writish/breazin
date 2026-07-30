@@ -85,4 +85,5 @@ jobs:
           node-version: 24
       - run: bash -n scripts/bundle.sh
       - run: node --check scripts/ci/release-build-provenance.mjs
-      - run: node --test scripts/ci/release-build-provenance.test.mjs
+      - run: node --check scripts/ci/release-promotion.mjs
+      - run: node --test scripts/ci/release-build-provenance.test.mjs scripts/ci/release-promotion.test.mjs

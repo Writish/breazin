@@ -48,6 +48,9 @@ to `main`.
   Sparkle-signs the DMG, and freezes exact-hash provenance with the Change
   Packet ID. Its artifact always states `publicationAuthorized=false`; quality
   evaluation and a second promotion approval remain separate authorities.
+  Three additional promotion/appcast tests now reject changed bytes,
+  cross-channel identity, non-monotonic Sparkle builds, and candidate
+  self-authorization; no publication workflow or appcast mutation is claimed.
 
 ## Verification boundary
 
