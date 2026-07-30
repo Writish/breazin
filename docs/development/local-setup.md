@@ -11,3 +11,17 @@
 If the checkout is managed by iCloud or another File Provider that continuously adds Finder metadata, set a local output directory before codesigning, for example `BREAZIN_OUTPUT_DIR=/tmp/breazin-artifacts scripts/bundle.sh debug --fast --without-speech`.
 
 The default unbundled executable uses development configuration and connects only to the local upload Broker at `127.0.0.1:8787`. Use `BREAZIN_ENVIRONMENT=staging` or `production` only for explicit package checks. External distribution additionally requires paid Apple Developer credentials, signing, notarization, and Sparkle signing.
+
+If the checkout is under Documents/iCloud or another File Provider, publish the
+assembled app to a local, unsynced volume. File Provider may reattach
+`com.apple.FinderInfo` to nested model bundles immediately after copying, which
+makes strict code-sign verification fail even when the staged bundle was valid:
+
+```bash
+BREAZIN_OUTPUT_APP=/tmp/Breazin-Dev.app \
+  scripts/bundle.sh debug --fast --without-speech
+```
+
+Release runners must always use an isolated, unsynced build path. A bundle that
+cannot pass `codesign --verify --deep --strict` at its final path is not a
+release artifact.

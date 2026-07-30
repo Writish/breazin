@@ -35,6 +35,9 @@ struct AppEnvironmentTests {
         #expect(development.uploadBrokerBaseURL.absoluteString == "http://127.0.0.1:8787")
         #expect(staging.uploadBrokerBaseURL.absoluteString == "https://uploads-staging.breazin.com")
         #expect(production.uploadBrokerBaseURL.absoluteString == "https://uploads.breazin.com")
+        #expect(development.feedbackBaseURL.absoluteString == "https://feedback-dev.breazin.com")
+        #expect(staging.feedbackBaseURL.absoluteString == "https://feedback-staging.breazin.com")
+        #expect(production.feedbackBaseURL.absoluteString == "https://feedback.breazin.com")
         #expect(staging.updateFeedURL != production.updateFeedURL)
     }
 

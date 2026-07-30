@@ -1,0 +1,184 @@
+name: Approved Codex Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: GitHub Issue created from an approved Change Packet
+        required: true
+        type: string
+
+concurrency:
+  group: approved-repair-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify_authority:
+    name: Verify signed approval
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      change_id: ${{ steps.packet.outputs.change_id }}
+      risk: ${{ steps.packet.outputs.risk }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: packet
+        name: Verify Issue signature and scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci/verify-approved-repair.mjs \
+            "${{ inputs.issue_number }}" \
+            /tmp/breazin-approved-change-packet.json
+
+  generate_patch:
+    name: Generate isolated Codex patch
+    needs: verify_authority
+    if: needs.verify_authority.outputs.risk == 'low'
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Re-verify authority in the execution job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci/verify-approved-repair.mjs \
+            "${{ inputs.issue_number }}" \
+            /tmp/breazin-approved-change-packet.json
+
+      - name: Run Codex without repository write credentials
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/prompts/approved-repair.md
+          output-file: /tmp/codex-final-message.md
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          codex-args: '["--ephemeral", "--ignore-user-config"]'
+
+      - name: Enforce approved and frozen paths
+        run: |
+          node scripts/ci/verify-repair-scope.mjs \
+            /tmp/breazin-approved-change-packet.json
+
+      - name: Serialize patch and evidence
+        run: |
+          git diff --binary HEAD > /tmp/codex-approved-repair.patch
+          test -s /tmp/codex-approved-repair.patch
+          mkdir -p repair-artifact
+          cp /tmp/codex-approved-repair.patch repair-artifact/repair.patch
+          cp /tmp/breazin-approved-change-packet.json repair-artifact/change-packet.json
+          cp /tmp/codex-final-message.md repair-artifact/codex-final-message.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: approved-repair-${{ needs.verify_authority.outputs.change_id }}
+          path: repair-artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+  open_draft_pr:
+    name: Open isolated Draft PR
+    needs: [verify_authority, generate_patch]
+    runs-on: macos-26
+    timeout-minutes: 20
+    environment: repair-development
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: approved-repair-${{ needs.verify_authority.outputs.change_id }}
+          path: repair-artifact
+
+      - name: Re-verify authority before repository write
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci/verify-approved-repair.mjs \
+            "${{ inputs.issue_number }}" \
+            /tmp/breazin-approved-change-packet.json
+          cmp /tmp/breazin-approved-change-packet.json repair-artifact/change-packet.json
+
+      - name: Apply and re-check the untrusted patch
+        run: |
+          git apply --index repair-artifact/repair.patch
+          node scripts/ci/verify-repair-scope.mjs \
+            /tmp/breazin-approved-change-packet.json
+
+      - name: Commit isolated repair branch
+        env:
+          CHANGE_ID: ${{ needs.verify_authority.outputs.change_id }}
+        run: |
+          branch="repair/${CHANGE_ID}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -m "${CHANGE_ID}: approved Codex repair"
+          git push origin "$branch"
+          echo "REPAIR_BRANCH=$branch" >> "$GITHUB_ENV"
+
+      - name: Open Draft PR for independent CI, evaluation, and review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGE_ID: ${{ needs.verify_authority.outputs.change_id }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          {
+            echo "## Summary"
+            echo
+            echo "Isolated repair generated from signed, human-approved Issue #${ISSUE_NUMBER}."
+            echo
+            echo "## Change contract"
+            echo
+            echo "- Change-ID: ${CHANGE_ID}"
+            echo "- Spec: signed Change Packet in Issue #${ISSUE_NUMBER}"
+            echo "- Risk: low"
+            echo "- Decision record: Issue #${ISSUE_NUMBER}"
+            echo
+            echo "## Evidence"
+            echo
+            echo "- Baseline evidence: declared in the signed Change Packet"
+            echo "- Candidate evidence: Codex patch artifact; full CI and L2 evaluation pending"
+            echo "- Required skips/not-run: human UI verification remains pending"
+            echo
+            echo "## Human verification"
+            echo
+            echo "- Required: yes"
+            echo "- Plan and current status: review the diff, CI, L2 evaluation, and targeted UI path before merge"
+            echo
+            echo "## Delivery authority"
+            echo
+            echo "- [x] The repair does not modify its frozen scenario, fixture, grader, or baseline evidence."
+            echo "- [x] Untrusted feedback did not directly authorize repository writes."
+            echo "- [x] No production credential, merge, release, or publication authority was added."
+            echo "- [x] Remaining unverified work and rollout/rollback conditions are explicit."
+          } > /tmp/repair-pr-body.md
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$REPAIR_BRANCH" \
+            --title "${CHANGE_ID}: approved Codex repair" \
+            --body-file /tmp/repair-pr-body.md

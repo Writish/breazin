@@ -1,6 +1,12 @@
-# PLAN implementation status
+# Client implementation status
 
-Updated 2026-07-28 against `PLAN.md` in the parent workspace.
+Updated 2026-07-30 against `PLAN.md` and the canonical milestone checklist in
+`../MILESTONE_STATUS.md`.
+
+This file describes client implementation evidence, not the cross-repository
+delivery queue. Phases 0–3 are implemented on
+`feature/breazin-foundation` in Draft PR #1; they are not represented as merged
+to `main`.
 
 ## Completed foundation
 
@@ -24,7 +30,17 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - The retired `TranscriptionBackend`, account/Clerk/Convex modules, legacy Agent and generation clients, private-backend upload path, subscription/credits UI, cost estimator, and three SwiftPM backend dependencies have been removed. AI Chat is now BYOK-only; image/video generation requires an installed provider adapter and provider credential.
 - Project activity remains a provider-neutral generation history. New saves no longer write `cost` or `costCredits`; legacy fields are tolerated and discarded while decoding. The legacy `backendJobId` project field and `.palmier` file identifiers remain compatibility-read contracts only, and old remote Jobs close locally with an explicit non-resumable message instead of being queried or resubmitted.
 - Product tool discovery no longer advertises unimplemented audio generation, upscaling, or backend feedback actions. The audio panel shows a truthful unavailable state until a provider adapter exists. Optional sample projects perform no network request unless the app bundle explicitly defines `BreazinSampleCatalogURL`.
-- The Phase 3 exit condition is met: the shipping request inventory contains no Palmier private backend and no Palmier/Clerk/Convex runtime client remains in the app. Rehosting the public visual-search model asset currently served from the upstream Hugging Face namespace is a post-Phase-3 supply-chain/branding follow-up, not an account or private-backend dependency. Optional account and feedback services remain separate product decisions.
+- The Phase 3 exit condition is met: the shipping request inventory contains no Palmier private backend and no Palmier/Clerk/Convex runtime client remains in the app. Rehosting the public visual-search model asset currently served from the upstream Hugging Face namespace is a post-Phase-3 supply-chain/branding follow-up, not an account or private-backend dependency. Optional accounts remain a separate product decision; feedback now uses the independent private control-plane boundary described below.
+
+## First-round feedback/evaluation slice
+
+- `AppConfiguration` now has isolated development, staging, and production feedback endpoints.
+- `FeedbackClient` encodes a strict privacy whitelist and uses its own Keychain token/device identity rather than Upload Broker authority. The transport has no raw prompt, project path, project content, provider key, or Authorization-log field.
+- The private `../platform/control-plane` repository now contains the local Worker, D1/R2 schema, append-only audit and decision events, scenario/evaluation registration, Decision Inbox, historical Seedream timeout scenario, and five accepted ADRs.
+- Pull requests now carry a Change Packet contract. CI rejects a PR body missing its Change ID, risk, specification, baseline/candidate evidence, human-verification section, or acknowledged authority declarations.
+- The client now has a Settings feedback pane with an exact semantic payload preview, explicit diagnostics/follow-up consent, independent Keychain provisioning, submit gating on review, and a user-initiated deletion flow. The real Dev App displays `https://feedback-dev.breazin.com` and its installation-scoped device ID; Worker/Access and the minimal GitHub App consumer are deployed. One-time token entry, real submit/delete, and approval remain pending human-in-the-loop acceptance.
+- The private platform Harness has now replayed `CHG-0001` in isolated baseline/candidate worktrees: the frozen grader fails on the baseline and passes on the candidate, with scenario/grader hashes and content-addressed evidence. This is real Red-before-Green execution, but not yet a statistically calibrated scenario suite.
+- Current verification passes 7 focused client tests across 2 suites and `swift build`. A real Development app published outside the Documents File Provider at `/tmp/Breazin-Dev-Verified.app` passes strict deep-signature and bundle smoke verification; it is ad-hoc, not an external Beta. The platform control plane passes 19 Workers-runtime tests, the GitHub consumer passes 5, and the quality evaluator passes 7; exact commands and scope are recorded in `../MILESTONE_STATUS.md`.
 
 ## Verification boundary
 
@@ -36,7 +52,7 @@ Updated 2026-07-28 against `PLAN.md` in the parent workspace.
 - Strict Phase 2 is closed in source and deterministic acceptance. The final retry follow-up passed 150 selected tests across 9 suites, an additional focused 28-test run during output-URL retry hardening, and—after rebasing onto the latest upstream main—the complete 1,206-test regression across 184 suites.
 - Phase 3 adapter contracts currently include a 32-test focused run covering the local provider catalog, OpenAI multipart/auth/timestamp/error behavior, provider configuration fallback, cloud-language validation, and transcript cache behavior. No paid OpenAI transcription call has been made or claimed; live BYOK acceptance remains manual.
 - The Phase 3 backend-removal slice compiled the complete app/test graph after deleting Clerk/Convex dependencies and passed 37 focused tests across global recovery, OpenAI transcription, and project JSON compatibility. The compile still reports pre-existing Swift concurrency warnings in `HDRVideoExporter`; they are not failures introduced by this slice.
-- Final Phase 3 cleanup also removed obsolete Clerk/Convex/Keychain plist injection, credits/subscription localization resources, and stale dependency notices from the shipping path. The lifecycle follow-up passed 30 focused provider/recovery/store tests, and GitHub Actions run `30359329719` passed the exact branch with 1,234 tests across 188 suites, Development app assembly, and bundle smoke verification. `swift build --traits BundledSpeech` also passed. The rebuilt staging candidate at `/tmp/breazin-beta-audit-final/Breazin.app` passed Beta identity, MCP metadata, and strict deep-signature verification; it is ad-hoc signed and remains an internal artifact, not a Developer ID/notarized external Beta.
+- Final Phase 3 cleanup also removed obsolete Clerk/Convex/Keychain plist injection, credits/subscription localization resources, and stale dependency notices from the shipping path. The lifecycle follow-up passed 30 focused provider/recovery/store tests, and GitHub Actions run `30364666008` passed the exact branch with 1,234 tests across 188 suites, Development app assembly, and bundle smoke verification. `swift build --traits BundledSpeech` also passed. The rebuilt staging candidate at `/tmp/breazin-beta-audit-final/Breazin.app` passed Beta identity, MCP metadata, and strict deep-signature verification; it is ad-hoc signed and remains an internal artifact, not a Developer ID/notarized external Beta.
 - External-Beta security contracts now have executable boundaries: MCP remains off by default and loopback-only, has no sessionless fallback, limits sessions to four with a 15-minute idle expiry, rate-limits pairing and authenticated requests, and issues a distinct digest-only Keychain token for every paired client. Settings lists clients, grants reversible-edit capability independently, and revokes one client without rotating every credential. Sessions are bound to their client identity. External MCP is read-only by default; import/export/generation and high-impact actions remain unavailable to unattended sessions. In-app AI Chat requires its edit preference for L1 and an explicit one-tool `Allow once` receipt for every L2/L3 action.
 - Project persistence now writes explicit root schema `1` and manifest schema `2`, migrates unversioned/older documents in memory, rejects future schemas before document mutation, and creates one idempotent sibling backup before the first in-place write of a migrated package. In-place saves stage a complete sibling package and replace only after preparation succeeds; injected interruption and out-of-space failures preserve the original. An anonymous golden package encoded by the pinned upstream `v0.6.13` tag verifies timeline/media semantics, offline media, backup bytes, and repeated-save idempotency.
 - The Upload Broker replaces its global bootstrap secret with an operator-managed registry of per-user/device credential digests. The client sends a stable Keychain device ID, upload handles and R2 object prefixes bind the opaque subject/device, and cross-device complete/refresh/delete attempts fail. Presigned PUTs include R2's SHA-256 checksum header, and `complete` compares the checksum retained by R2 rather than trusting client-authored metadata alone. Worker version `319267f7-014a-45e2-b6d9-82582592d43d` (source tag `platform-84f64ac`) is deployed at 100% in staging by deployment `567a76e3-82d7-44e5-b7db-416656ab58d6`, with the five required secrets and no active `BROKER_TOKEN` binding. Live health, unauthenticated rejection, binding inspection, the `tmp/` two-day lifecycle rule, and the authenticated checksum-bound object-byte/refresh/delete harness all passed.
@@ -46,13 +62,14 @@ See `docs/development/phase-2-acceptance.md`,
 `docs/development/external-beta-security-acceptance.md` for the evidence
 matrices and operator steps.
 
-## Deliberately pending after strict Phase 2
+## Current pending gates
 
 - Additional production evidence: a wall-clock short-TTL expiry drill, live cancellation-near-completion drill, and stricter unopened-project staging observation remain useful live exercises. They are not represented as completed and do not replace the deterministic Phase 2 contracts.
 - External-Beta hardening still requires manual MCP pairing/approval UI acceptance and the release signing/notarization gates in `docs/development/external-beta-security-acceptance.md`. Seedance task-status query timeout remains a non-terminal refresh error because Volcengine does not define `timeout` as a task terminal state; Seedream's synchronous response timeout is a separate terminal local condition because no queryable provider task ID exists.
 - OpenAI GPT Image 2 (OAuth route) and Midjourney (Discord bot route) are represented as unimplemented authentication/provider contracts only; neither integration is presented as working.
-- Phase 3 optional platform accounts and aggregated feedback remain intentionally absent pending a backend/privacy decision.
+- The Development feedback/evaluation control plane, D1, private R2, Zero Trust Free Access application/policy, custom domain, and Access login are deployed. The independent GitHub consumer is also deployed; the first real token → feedback → approval → Issue event remains pending.
+- `CHG-0001` now has fresh immutable baseline/candidate replay evidence. Those evidence envelopes pass the local provenance and trace contract; they still need promotion into the deployed development evidence store.
 - Phase 4 release automation requires Apple Developer signing/notarization credentials and a Sparkle EdDSA key.
-- Phases 5 and 6 remain product milestones; no placeholder cloud endpoints or fake production integrations were added.
+- Approved Codex repair has a local signed-packet/scope-isolated workflow but is not yet pushed or run and the repository has no `OPENAI_API_KEY` secret. The 10-journey/40-scenario evaluator is proposed rather than calibrated; Beta journey learning and Stable release remain later milestones.
 
 The local development build is intentionally BYOK-first, loopback-only for MCP, telemetry-off by default, and distributable only with ad-hoc signing until release credentials are supplied.

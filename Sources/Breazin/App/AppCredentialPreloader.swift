@@ -5,5 +5,6 @@ enum AppCredentialPreloader {
         _ = AnthropicKeychain.load()
         _ = DeepSeekKeychain.load()
         ProviderCredentialStore.preloadForLaunch()
+        FeedbackCredentialStore.preloadForLaunch()
     }
 }

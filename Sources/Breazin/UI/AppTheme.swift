@@ -313,6 +313,8 @@ enum AppTheme {
         static let skillToastWidth: CGFloat = 380
         static let skillMenuWidth: CGFloat = 168
         static let skillToastDuration: Duration = .seconds(5)
+        static let feedbackDescriptionMinHeight: CGFloat = 120
+        static let feedbackPreviewMinHeight: CGFloat = 220
     }
 
     enum EditorPanel {

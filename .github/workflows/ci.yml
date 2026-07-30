@@ -13,6 +13,15 @@ permissions:
   contents: read
 
 jobs:
+  change-contract:
+    name: Change Contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PR change contract
+        run: scripts/ci/verify-change-contract.sh
+
   build-test:
     name: Build & Test
     # Breazin targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.

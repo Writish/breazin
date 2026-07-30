@@ -213,11 +213,20 @@ touch "$APP"
 # iCloud/File Provider workspaces can recreate Finder metadata immediately after
 # it is cleared. Stage codesigning on a local volume, then copy back without
 # resource forks so the repository can live under Documents/iCloud safely.
-OUTPUT_APP="$APP"
+ASSEMBLED_APP="$APP"
+OUTPUT_APP="${BREAZIN_OUTPUT_APP:-$ASSEMBLED_APP}"
+case "$OUTPUT_APP" in
+  /*.app) ;;
+  *)
+    echo "!! BREAZIN_OUTPUT_APP must be an absolute .app path" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$(dirname "$OUTPUT_APP")"
 CODESIGN_WORK="$(mktemp -d /tmp/breazin-codesign.XXXXXX)"
 STAGED_APP="$CODESIGN_WORK/Breazin.app"
-ditto --norsrc "$OUTPUT_APP" "$STAGED_APP"
-rm -rf "$OUTPUT_APP"
+ditto --norsrc "$ASSEMBLED_APP" "$STAGED_APP"
+rm -rf "$ASSEMBLED_APP"
 APP="$STAGED_APP"
 xattr -cr "$APP"
 find "$APP" -exec xattr -d com.apple.FinderInfo {} \; 2>/dev/null || true
@@ -226,8 +235,11 @@ find "$APP" -exec xattr -d com.apple.ResourceFork {} \; 2>/dev/null || true
 publish_app() {
   rm -rf "$OUTPUT_APP"
   ditto --norsrc "$APP" "$OUTPUT_APP"
-  xattr -d com.apple.FinderInfo "$OUTPUT_APP" 2>/dev/null || true
-  xattr -d com.apple.ResourceFork "$OUTPUT_APP" 2>/dev/null || true
+  # Documents/iCloud may attach FinderInfo to nested bundle entries while the
+  # copy is in progress, so clear the published tree rather than only its root.
+  xattr -cr "$OUTPUT_APP"
+  find "$OUTPUT_APP" -exec xattr -d com.apple.FinderInfo {} \; 2>/dev/null || true
+  find "$OUTPUT_APP" -exec xattr -d com.apple.ResourceFork {} \; 2>/dev/null || true
   codesign --verify --deep --strict --verbose=2 "$OUTPUT_APP"
   rm -rf "$CODESIGN_WORK"
   APP="$OUTPUT_APP"

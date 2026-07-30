@@ -23,6 +23,7 @@ struct AppConfiguration: Equatable, Sendable {
     let telemetryEnvironment: String
     let updateFeedURL: URL?
     let uploadBrokerBaseURL: URL
+    let feedbackBaseURL: URL
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -41,6 +42,7 @@ struct AppConfiguration: Equatable, Sendable {
             mcpPort = 19790
             updateFeedURL = nil
             uploadBrokerBaseURL = URL(string: "http://127.0.0.1:8787")!
+            feedbackBaseURL = URL(string: "https://feedback-dev.breazin.com")!
         case .staging:
             displayName = "呼息 Beta"
             bundleIdentifier = "com.writish.breazin.beta"
@@ -51,6 +53,7 @@ struct AppConfiguration: Equatable, Sendable {
             mcpPort = 19791
             updateFeedURL = URL(string: "https://raw.githubusercontent.com/Writish/breazin/main/appcast-beta.xml")
             uploadBrokerBaseURL = URL(string: "https://uploads-staging.breazin.com")!
+            feedbackBaseURL = URL(string: "https://feedback-staging.breazin.com")!
         case .production:
             displayName = "呼息"
             bundleIdentifier = "com.writish.breazin"
@@ -61,6 +64,7 @@ struct AppConfiguration: Equatable, Sendable {
             mcpPort = 19789
             updateFeedURL = URL(string: "https://raw.githubusercontent.com/Writish/breazin/main/appcast.xml")
             uploadBrokerBaseURL = URL(string: "https://uploads.breazin.com")!
+            feedbackBaseURL = URL(string: "https://feedback.breazin.com")!
         }
     }
 
