@@ -88,3 +88,65 @@ jobs:
       - run: node --check scripts/ci/release-build-provenance.mjs
       - run: node --check scripts/ci/release-promotion.mjs
       - run: node --test scripts/ci/release-build-provenance.test.mjs scripts/ci/release-promotion.test.mjs
+
+  artifact_runtime_producer:
+    name: Artifact Runtime Producer
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Create bounded runtime probe
+        run: |
+          mkdir -p artifact-runtime
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schemaVersion: 1,
+              repository: $repository,
+              commit: $commit,
+              runId: $runId,
+              runAttempt: $runAttempt,
+              containsUserData: false,
+              publicationAuthorized: false
+            }' > artifact-runtime/probe.json
+          shasum -a 256 artifact-runtime/probe.json > artifact-runtime/probe.sha256
+      - id: upload
+        name: Upload bounded runtime probe
+        uses: actions/upload-artifact@v6
+        with:
+          name: actions-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifact-runtime/
+          if-no-files-found: error
+          retention-days: 1
+
+  artifact_runtime_consumer:
+    name: Artifact Runtime Consumer
+    needs: artifact_runtime_producer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact runtime probe
+        uses: actions/download-artifact@v7
+        with:
+          name: actions-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifact-runtime
+      - name: Verify probe identity and content
+        env:
+          ARTIFACT_DIGEST: ${{ needs.artifact_runtime_producer.outputs.artifact_digest }}
+        run: |
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          shasum -a 256 -c artifact-runtime/probe.sha256
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '.repository == $repository
+              and .commit == $commit
+              and .runId == $runId
+              and .runAttempt == $runAttempt
+              and .containsUserData == false
+              and .publicationAuthorized == false' \
+            artifact-runtime/probe.json
