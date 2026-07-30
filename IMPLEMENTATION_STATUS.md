@@ -83,9 +83,11 @@ matrices and operator steps.
   executable provenance contract. The PR body now carries the truthful
   CHG-0001 evidence boundary and all four delivery-authority declarations.
   Commits `6383b83`, `41722c7`, and status follow-up `4b5b78f` are pushed;
-  latest run `30544574746` passed
+  evidence run `30544574746` passed
   Change Contract, Dependency Review, Release Build Contract, and complete
   Build & Test with 1,238 tests / 189 suites, app assembly, and bundle smoke.
+  Documentation correction `ffe6dbf` later passed the same four jobs in run
+  `30546694682`.
   Running the manual release workflow still
   requires the protected
   Developer ID certificate/team identity, Apple notarization API credential,
