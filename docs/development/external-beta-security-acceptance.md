@@ -63,3 +63,9 @@ Before giving the app to any external tester:
    and signing identities cannot read or mutate Production state.
 5. Require green PR checks and record any accepted exception. A draft PR or a
    locally passing suite is not a release approval.
+
+The protected `release-candidate.yml` workflow is the only current automated
+entry for Developer ID candidate creation. Its uploaded artifact explicitly has
+`publicationAuthorized=false`; do not manually turn that artifact into an
+appcast item before exact-hash scenario evaluation and the second protected
+promotion approval.

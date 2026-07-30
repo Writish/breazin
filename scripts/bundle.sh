@@ -38,6 +38,9 @@ fi
 APP_ENV="${BREAZIN_ENVIRONMENT:-development}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+NOTARY_EVIDENCE_DIR="${NOTARY_EVIDENCE_DIR:-}"
+SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
+SPARKLE_SIGNATURE_OUTPUT="${SPARKLE_SIGNATURE_OUTPUT:-}"
 SENTRY_DSN="${SENTRY_DSN:-}"
 POSTHOG_PROJECT_TOKEN="${POSTHOG_PROJECT_TOKEN:-}"
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
@@ -337,9 +340,23 @@ rm -f "$ZIP"
 /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
 
 echo "==> Submitting to Apple notary (this can take several minutes)"
-xcrun notarytool submit "$ZIP" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --wait
+submit_notary() {
+  local artifact="$1" label="$2"
+  if [ -n "$NOTARY_EVIDENCE_DIR" ]; then
+    mkdir -p "$NOTARY_EVIDENCE_DIR"
+    xcrun notarytool submit "$artifact" \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --wait \
+      --output-format json |
+      tee "$NOTARY_EVIDENCE_DIR/$label.json"
+  else
+    xcrun notarytool submit "$artifact" \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --wait
+  fi
+}
+
+submit_notary "$ZIP" "app"
 
 echo "==> Stapling ticket to .app"
 xcrun stapler staple "$APP"
@@ -362,9 +379,7 @@ echo "==> Codesigning DMG"
 codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG"
 
 echo "==> Submitting DMG to notary"
-xcrun notarytool submit "$DMG" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --wait
+submit_notary "$DMG" "dmg"
 
 echo "==> Stapling DMG"
 xcrun stapler staple "$DMG"
@@ -374,7 +389,23 @@ upload_dsyms
 publish_app
 
 echo "==> Signing DMG with Sparkle EdDSA key"
-SPARKLE_SIG="$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$DMG")"
+if [ -n "$SPARKLE_PRIVATE_KEY_FILE" ]; then
+  if [ ! -f "$SPARKLE_PRIVATE_KEY_FILE" ]; then
+    echo "!! SPARKLE_PRIVATE_KEY_FILE does not exist" >&2
+    exit 1
+  fi
+  SPARKLE_SIG="$(
+    "$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" \
+      --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+      -p \
+      "$DMG"
+  )"
+else
+  SPARKLE_SIG="$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$DMG")"
+fi
+if [ -n "$SPARKLE_SIGNATURE_OUTPUT" ]; then
+  printf '%s\n' "$SPARKLE_SIG" >"$SPARKLE_SIGNATURE_OUTPUT"
+fi
 
 echo ""
 echo "==> Done"
