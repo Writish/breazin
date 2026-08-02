@@ -102,6 +102,13 @@ test("scope validation rejects frozen, hard-protected, outside, or empty patches
     /hard-protected path/,
   );
   assert.throws(
+    () => validateRepairScope({
+      changedPaths: ["scripts/ci/repair-evaluation-request.mjs"],
+      packet: { ...packet, allowedPaths: ["scripts/ci"] },
+    }),
+    /hard-protected path/,
+  );
+  assert.throws(
     () => validateRepairScope({ changedPaths: ["Tests/Fixtures/frozen.json"], packet }),
     /frozen path/,
   );

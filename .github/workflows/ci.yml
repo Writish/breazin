@@ -32,9 +32,11 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: node --check scripts/ci/approved-repair-contract.mjs
+      - run: node --check scripts/ci/repair-evaluation-request.mjs
+      - run: node --check scripts/ci/prepare-repair-evaluation-request.mjs
       - run: node --check scripts/ci/verify-approved-repair.mjs
       - run: node --check scripts/ci/verify-repair-scope.mjs
-      - run: node --test scripts/ci/approved-repair-contract.test.mjs
+      - run: node --test scripts/ci/approved-repair-contract.test.mjs scripts/ci/repair-evaluation-request.test.mjs
 
   build-test:
     name: Build & Test
@@ -164,3 +166,37 @@ jobs:
               and .containsUserData == false
               and .publicationAuthorized == false' \
             artifact-runtime/probe.json
+
+  repair-evaluation-request:
+    name: Repair Evaluation Request
+    if: >-
+      github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'repair/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: [approved-repair-contract, build-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Prepare exact evidence-empty L2 request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/ci/prepare-repair-evaluation-request.mjs
+          repair-evaluation-request.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: repair-evaluation-request-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: repair-evaluation-request.json
+          if-no-files-found: error
+          retention-days: 14

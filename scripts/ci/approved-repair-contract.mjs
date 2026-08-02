@@ -3,6 +3,9 @@ import { createPublicKey, verify } from "node:crypto";
 export const hardProtectedPaths = Object.freeze([
   ".github",
   "scripts/ci/approved-repair-contract.mjs",
+  "scripts/ci/prepare-repair-evaluation-request.mjs",
+  "scripts/ci/repair-evaluation-request.mjs",
+  "scripts/ci/repair-evaluation-request.test.mjs",
   "scripts/ci/verify-approved-repair.mjs",
   "scripts/ci/verify-repair-scope.mjs",
 ]);
