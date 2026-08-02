@@ -22,6 +22,20 @@ jobs:
       - name: Verify PR change contract
         run: scripts/ci/verify-change-contract.sh
 
+  approved-repair-contract:
+    name: Approved Repair Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --check scripts/ci/approved-repair-contract.mjs
+      - run: node --check scripts/ci/verify-approved-repair.mjs
+      - run: node --check scripts/ci/verify-repair-scope.mjs
+      - run: node --test scripts/ci/approved-repair-contract.test.mjs
+
   build-test:
     name: Build & Test
     # Breazin targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.

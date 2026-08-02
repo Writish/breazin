@@ -2,12 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-
-const hardProtectedPaths = [
-  ".github",
-  "scripts/ci/verify-approved-repair.mjs",
-  "scripts/ci/verify-repair-scope.mjs",
-];
+import { validateRepairScope } from "./approved-repair-contract.mjs";
 
 const packetPath =
   process.argv[2] ?? "/tmp/breazin-approved-change-packet.json";
@@ -29,28 +24,14 @@ const output = execFileSync(
   { encoding: "utf8" },
 );
 const changedPaths = output.split("\0").filter(Boolean);
-if (changedPaths.length === 0) {
-  fail("repair produced no file changes");
-}
-for (const path of changedPaths) {
-  if (hardProtectedPaths.some((prefix) => pathWithin(path, prefix))) {
-    fail(`repair modified hard-protected path: ${path}`);
-  }
-  if (packet.frozenPaths.some((prefix) => pathWithin(path, prefix))) {
-    fail(`repair modified frozen path: ${path}`);
-  }
-  if (!packet.allowedPaths.some((prefix) => pathWithin(path, prefix))) {
-    fail(`repair modified path outside approved scope: ${path}`);
-  }
+try {
+  validateRepairScope({ changedPaths, packet });
+} catch (error) {
+  fail(error instanceof Error ? error.message : "repair scope verification failed");
 }
 console.log(
   `Repair scope verified for ${changedPaths.length} changed file(s): ${changedPaths.join(", ")}`,
 );
-
-function pathWithin(path, approved) {
-  const normalized = approved.endsWith("/") ? approved : `${approved}/`;
-  return path === approved || path.startsWith(normalized);
-}
 
 function fail(message) {
   console.error(message);
