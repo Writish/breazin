@@ -1,6 +1,13 @@
 import Foundation
 import MCP
 
+protocol MCPServerLifecycle: AnyObject, Sendable {
+    func start() async throws
+    func stop() async
+}
+
+extension MCPHTTPServer: MCPServerLifecycle {}
+
 /// HTTP adapter. Tool handling lives in `ToolExecutor`.
 @Observable
 @MainActor
@@ -26,38 +33,56 @@ final class MCPService {
     @ObservationIgnored
     private let projectProvider: () -> VideoProject?
     @ObservationIgnored
-    private var httpServer: MCPHTTPServer?
+    private let lifecycleServer: (any MCPServerLifecycle)?
+    @ObservationIgnored
+    private var httpServer: (any MCPServerLifecycle)?
+    @ObservationIgnored
+    private var stopTask: Task<Void, Never>?
 
-    init(projectProvider: @escaping () -> VideoProject?) {
+    init(
+        projectProvider: @escaping () -> VideoProject?,
+        lifecycleServer: (any MCPServerLifecycle)? = nil
+    ) {
         self.projectProvider = projectProvider
+        self.lifecycleServer = lifecycleServer
     }
 
     func start() {
-        let httpServer = MCPHTTPServer(
-            port: Self.port,
-            authenticate: MCPAccessControl.authenticateClient,
-            pairClient: MCPAccessControl.pair
-        ) { [self] client in
-            let toolExecutor = await makeSessionToolExecutor(client: client)
-            let server = Server(
-                name: AppConfiguration.current.mcpServiceName,
-                version: "1.0.0",
-                instructions: AgentInstructions.serverInstructions + AgentInstructions.projectNavigation,
-                capabilities: .init(
-                    resources: .init(subscribe: false, listChanged: false),
-                    tools: .init(listChanged: true)
+        guard httpServer == nil, stopTask == nil else { return }
+        let httpServer: any MCPServerLifecycle
+        if let lifecycleServer {
+            httpServer = lifecycleServer
+        } else {
+            httpServer = MCPHTTPServer(
+                port: Self.port,
+                authenticate: MCPAccessControl.authenticateClient,
+                pairClient: MCPAccessControl.pair
+            ) { [self] client in
+                let toolExecutor = await makeSessionToolExecutor(client: client)
+                let server = Server(
+                    name: AppConfiguration.current.mcpServiceName,
+                    version: "1.0.0",
+                    instructions: AgentInstructions.serverInstructions + AgentInstructions.projectNavigation,
+                    capabilities: .init(
+                        resources: .init(subscribe: false, listChanged: false),
+                        tools: .init(listChanged: true)
+                    )
                 )
-            )
-            await Self.registerTools(on: server, executor: toolExecutor)
-            await Self.registerResources(on: server)
-            return MCPServerInstance(server: server) { clientInfo in
-                await toolExecutor.setMCPClientInfo(MCPClientInfo(clientInfo))
+                await Self.registerTools(on: server, executor: toolExecutor)
+                await Self.registerResources(on: server)
+                return MCPServerInstance(server: server) { clientInfo in
+                    await toolExecutor.setMCPClientInfo(MCPClientInfo(clientInfo))
+                }
             }
         }
         self.httpServer = httpServer
         Task { @MainActor [weak self] in
             do {
                 try await httpServer.start()
+                guard self?.owns(httpServer) == true else {
+                    await httpServer.stop()
+                    return
+                }
                 Log.mcp.notice("http server started port=\(Self.port)")
                 self?.isRunning = true
             } catch {
@@ -75,13 +100,27 @@ final class MCPService {
         )
     }
 
-    func stop() {
-        if let server = httpServer {
-            Task { await server.stop() }
+    func stop() async {
+        if let stopTask {
+            await stopTask.value
+            return
         }
-        httpServer = nil
+        guard let server = httpServer else {
+            isRunning = false
+            return
+        }
         isRunning = false
+        let task = Task { await server.stop() }
+        stopTask = task
+        await task.value
+        stopTask = nil
+        if owns(server) { httpServer = nil }
         Log.mcp.notice("http server stopped")
+    }
+
+    private func owns(_ server: any MCPServerLifecycle) -> Bool {
+        guard let httpServer else { return false }
+        return httpServer === server
     }
 
     nonisolated static func registerTools(on server: Server, executor: ToolExecutor) async {

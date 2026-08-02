@@ -215,7 +215,9 @@ struct AgentPane: View {
                 "",
                 isOn: Binding(
                     get: { (appState.mcpService?.isRunning ?? false) },
-                    set: { appState.setMCPEnabled($0) }
+                    set: { enabled in
+                        Task { await appState.setMCPEnabled(enabled) }
+                    }
                 )
             )
             .labelsHidden()

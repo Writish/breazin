@@ -56,17 +56,22 @@ final class AppState {
         mcpService = service
     }
 
-    func stopMCPService() {
-        mcpService?.stop()
-        mcpService = nil
+    func stopMCPService() async {
+        guard let service = mcpService else { return }
+        await service.stop()
+        if mcpService === service { mcpService = nil }
     }
 
-    func setMCPEnabled(_ enabled: Bool) {
+    func setMCPEnabled(_ enabled: Bool) async {
         MCPService.isEnabledPreference = enabled
         if enabled {
-            startMCPService()
+            if mcpService?.isRunning != true {
+                await stopMCPService()
+                if MCPService.isEnabledPreference { startMCPService() }
+            }
         } else {
-            stopMCPService()
+            await stopMCPService()
+            if MCPService.isEnabledPreference { startMCPService() }
         }
     }
 
@@ -75,7 +80,8 @@ final class AppState {
             MCPAccessControl.resetPairing()
         }.value
         guard MCPService.isEnabledPreference else { return }
-        stopMCPService()
+        await stopMCPService()
+        guard MCPService.isEnabledPreference else { return }
         startMCPService()
     }
 
@@ -87,19 +93,20 @@ final class AppState {
         let changed = await Task.detached(priority: .utility) {
             MCPAccessControl.setCapability(capability, enabled: enabled, clientID: clientID)
         }.value
-        if changed { restartMCPServiceIfEnabled() }
+        if changed { await restartMCPServiceIfEnabled() }
     }
 
     func revokeMCPClient(clientID: String) async {
         let changed = await Task.detached(priority: .utility) {
             MCPAccessControl.revoke(clientID: clientID)
         }.value
-        if changed { restartMCPServiceIfEnabled() }
+        if changed { await restartMCPServiceIfEnabled() }
     }
 
-    private func restartMCPServiceIfEnabled() {
+    private func restartMCPServiceIfEnabled() async {
         guard MCPService.isEnabledPreference else { return }
-        stopMCPService()
+        await stopMCPService()
+        guard MCPService.isEnabledPreference else { return }
         startMCPService()
     }
 
