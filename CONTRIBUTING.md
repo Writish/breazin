@@ -1,37 +1,13 @@
-# Contributing
+# Contributing to Breazin
 
-## How to contribute
+Thank you for improving Breazin. Before opening a pull request:
 
-The best way to contribute is to open a Github issue. Bug reports, feature requests, ideas are welcome.
+1. Create a focused branch from `main`.
+2. Run `swift build` and the smallest relevant test target.
+3. Run `swift test` before handoff and record any environment-dependent failures.
+4. For packaging changes, run `scripts/bundle.sh debug --fast --without-speech` and `scripts/ci/verify-bundle.sh .build/Breazin.app development`.
+5. Do not commit secrets, signing certificates, provisioning profiles, API keys, or notarization credentials.
 
-With AI coding, human reviews are the bottleneck. We don't have the bandwidth to review large unsolicited PRs.
+The application module is `Sources/Breazin`, and tests live in `Tests/BreazinTests`. Product identity must come from `AppConfiguration`; do not add new hard-coded bundle IDs, URL schemes, storage paths, ports, or update feeds.
 
-## Getting Started
-
-### Prerequisites
-- macOS 26+
-- Xcode 16+
-- Swift 6.2 toolchain
-
-### Develop
-```bash
-git clone https://github.com/palmier-io/palmier-pro
-cd palmier-pro
-
-swift build
-swift run
-```
-
-For a bundled debug build that launches the `.app` and streams OSLog:
-
-```bash
-./scripts/dev.sh
-```
-
-## Test
-
-```bash
-swift test
-```
-
-By contributing, you agree your contributions are licensed under [GPLv3](LICENSE).
+Report security issues privately to the repository owner rather than opening a public issue. General bugs and proposals belong in [GitHub Issues](https://github.com/Writish/breazin/issues).

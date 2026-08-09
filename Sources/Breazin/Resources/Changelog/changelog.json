@@ -1,0 +1,24 @@
+{
+  "changelogURL": "https://github.com/Writish/breazin/releases",
+  "entries": [
+    {
+      "version": "0.6.13",
+      "date": "2026-07-20",
+      "sections": [
+        {
+          "heading": "New",
+          "items": [
+            "AI Transitions: Select a gap betweeen two clips and generate a transition using AI.",
+            "Slip edit: press T to slip edit a clip (Shifting the underlying content without changing the duration)."
+          ]
+        },
+        {
+          "heading": "Improved",
+          "items": [
+            "Audio Synchronization: More accurate audio synchronization between clips."
+          ]
+        }
+      ]
+    }
+  ]
+}

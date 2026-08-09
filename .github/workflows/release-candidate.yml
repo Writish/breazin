@@ -1,0 +1,275 @@
+name: Build Signed Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Separate-identity Beta or production-identity Stable RC
+        required: true
+        type: choice
+        options:
+          - beta
+          - stable-candidate
+      version:
+        description: Candidate marketing version
+        required: true
+        type: string
+      change_id:
+        description: Approved release Change Packet ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-candidate-${{ inputs.channel }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 75
+    environment:
+      name: ${{ inputs.channel == 'beta' && 'beta-release' || 'stable-release' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enforce release branch and Change Packet identity
+        env:
+          CHANGE_ID: ${{ inputs.change_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/release/*) ;;
+            *) echo "Signed candidates require a release/* branch" >&2; exit 1 ;;
+          esac
+          [[ "$CHANGE_ID" =~ ^CHG-[0-9]{4}$ ]] || {
+            echo "change_id must use CHG-NNNN format" >&2
+            exit 1
+          }
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || {
+            echo "version must contain two or three numeric components" >&2
+            exit 1
+          }
+
+      - name: Require isolated release secrets
+        env:
+          CERTIFICATE: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+          EXPECTED_TEAM_ID: ${{ secrets.DEVELOPER_ID_TEAM_ID }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          for name in CERTIFICATE CERTIFICATE_PASSWORD SIGNING_IDENTITY \
+            EXPECTED_TEAM_ID NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID \
+            SPARKLE_PRIVATE_KEY SPARKLE_PUBLIC_KEY; do
+            test -n "${!name:-}" || {
+              echo "Missing protected release secret: $name" >&2
+              exit 1
+            }
+          done
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Ensure Metal toolchain
+        run: |
+          if ! xcrun --toolchain Metal --find metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --toolchain Metal --find metal
+
+      - name: Import ephemeral Developer ID identity
+        env:
+          CERTIFICATE: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+        run: |
+          RELEASE_KEYCHAIN="$RUNNER_TEMP/breazin-release.keychain-db"
+          RELEASE_P12="$RUNNER_TEMP/developer-id.p12"
+          RELEASE_KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$CERTIFICATE" | /usr/bin/base64 -D >"$RELEASE_P12"
+          security create-keychain -p "$RELEASE_KEYCHAIN_PASSWORD" "$RELEASE_KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$RELEASE_KEYCHAIN"
+          security unlock-keychain -p "$RELEASE_KEYCHAIN_PASSWORD" "$RELEASE_KEYCHAIN"
+          security import "$RELEASE_P12" \
+            -k "$RELEASE_KEYCHAIN" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$RELEASE_KEYCHAIN_PASSWORD" \
+            "$RELEASE_KEYCHAIN"
+          security list-keychains -d user -s "$RELEASE_KEYCHAIN"
+          printf 'RELEASE_KEYCHAIN=%s\n' "$RELEASE_KEYCHAIN" >>"$GITHUB_ENV"
+
+      - name: Configure ephemeral notarization and Sparkle keys
+        env:
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          SPARKLE_KEY_PATH="$RUNNER_TEMP/sparkle-private-key"
+          printf '%s' "$NOTARY_KEY" | /usr/bin/base64 -D >"$NOTARY_KEY_PATH"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" >"$SPARKLE_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH" "$SPARKLE_KEY_PATH"
+          xcrun notarytool store-credentials breazin-release-ci \
+            --key "$NOTARY_KEY_PATH" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID"
+          printf 'NOTARY_KEY_PATH=%s\n' "$NOTARY_KEY_PATH" >>"$GITHUB_ENV"
+          printf 'SPARKLE_KEY_PATH=%s\n' "$SPARKLE_KEY_PATH" >>"$GITHUB_ENV"
+
+      - name: Full deterministic tests
+        run: swift test
+
+      - name: Build, sign, notarize, staple, and Sparkle-sign once
+        env:
+          BREAZIN_ENVIRONMENT: ${{ inputs.channel == 'beta' && 'staging' || 'production' }}
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+          NOTARY_PROFILE: breazin-release-ci
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          BREAZIN_OUTPUT_DIR: ${{ runner.temp }}/breazin-release
+          BREAZIN_OUTPUT_APP: ${{ runner.temp }}/breazin-release/Breazin.app
+          NOTARY_EVIDENCE_DIR: ${{ runner.temp }}/breazin-release/notary
+          SPARKLE_SIGNATURE_OUTPUT: ${{ runner.temp }}/breazin-release/sparkle-signature.txt
+        run: |
+          export SPARKLE_PRIVATE_KEY_FILE="$SPARKLE_KEY_PATH"
+          scripts/bundle.sh release --dist
+
+      - name: Verify exact assembled identity and Apple acceptance
+        env:
+          APP_ENVIRONMENT: ${{ inputs.channel == 'beta' && 'staging' || 'production' }}
+          EXPECTED_TEAM_ID: ${{ secrets.DEVELOPER_ID_TEAM_ID }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          OUTPUT="$RUNNER_TEMP/breazin-release"
+          scripts/ci/verify-bundle.sh "$OUTPUT/Breazin.app" "$APP_ENVIRONMENT"
+          ACTUAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$OUTPUT/Breazin.app/Contents/Info.plist")"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION" || {
+            echo "Input version does not match assembled app: $ACTUAL_VERSION" >&2
+            exit 1
+          }
+          codesign --verify --deep --strict --verbose=4 "$OUTPUT/Breazin.app"
+          codesign -dv --verbose=4 "$OUTPUT/Breazin.app" 2>"$OUTPUT/codesign.txt"
+          grep -q '^Authority=Developer ID Application:' "$OUTPUT/codesign.txt"
+          grep -q "^TeamIdentifier=${EXPECTED_TEAM_ID}$" "$OUTPUT/codesign.txt"
+          grep -q 'flags=.*runtime' "$OUTPUT/codesign.txt"
+          xcrun stapler validate "$OUTPUT/Breazin.app"
+          xcrun stapler validate "$OUTPUT/Breazin.dmg"
+          spctl --assess --type execute --verbose=4 "$OUTPUT/Breazin.app"
+          jq -e '.status == "Accepted" and (.id | length > 0)' "$OUTPUT/notary/app.json"
+          jq -e '.status == "Accepted" and (.id | length > 0)' "$OUTPUT/notary/dmg.json"
+
+      - name: Freeze signed-build provenance
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          CHANGE_ID: ${{ inputs.change_id }}
+        run: |
+          OUTPUT="$RUNNER_TEMP/breazin-release"
+          TEAM_ID="$(sed -n 's/^TeamIdentifier=//p' "$OUTPUT/codesign.txt")"
+          AUTHORITY="$(sed -n 's/^Authority=//p' "$OUTPUT/codesign.txt" | head -n 1)"
+          ACTUAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$OUTPUT/Breazin.app/Contents/Info.plist")"
+          BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$OUTPUT/Breazin.app/Contents/Info.plist")"
+          case "$CHANNEL" in
+            beta)
+              APP_ENVIRONMENT=staging
+              BUNDLE_ID=com.writish.breazin.beta
+              FEED=beta
+              ;;
+            stable-candidate)
+              APP_ENVIRONMENT=production
+              BUNDLE_ID=com.writish.breazin
+              FEED=stable
+              ;;
+            *) exit 1 ;;
+          esac
+          jq -n \
+            --arg candidate_id "${CHANNEL}-${VERSION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --arg channel "$CHANNEL" \
+            --arg change_id "$CHANGE_ID" \
+            --arg version "$ACTUAL_VERSION" \
+            --arg build_version "$BUILD_VERSION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" \
+            --arg environment "$APP_ENVIRONMENT" \
+            --arg bundle_id "$BUNDLE_ID" \
+            --arg team_id "$TEAM_ID" \
+            --arg authority "$AUTHORITY" \
+            --arg app_id "$(jq -r .id "$OUTPUT/notary/app.json")" \
+            --arg app_status "$(jq -r .status "$OUTPUT/notary/app.json")" \
+            --arg dmg_id "$(jq -r .id "$OUTPUT/notary/dmg.json")" \
+            --arg dmg_status "$(jq -r .status "$OUTPUT/notary/dmg.json")" \
+            --arg sparkle_signature "$(tr -d '\n' <"$OUTPUT/sparkle-signature.txt")" \
+            --arg feed "$FEED" \
+            '{
+              candidateId: $candidate_id,
+              channel: $channel,
+              changeId: $change_id,
+              version: $version,
+              buildVersion: $build_version,
+              repository: $repository,
+              commit: $commit,
+              identity: {
+                environment: $environment,
+                bundleId: $bundle_id,
+                teamId: $team_id,
+                authority: $authority,
+                hardenedRuntime: true
+              },
+              notarization: {
+                appSubmissionId: $app_id,
+                appStatus: $app_status,
+                dmgSubmissionId: $dmg_id,
+                dmgStatus: $dmg_status,
+                appStapled: true,
+                dmgStapled: true,
+                gatekeeper: "accepted"
+              },
+              sparkle: { signature: $sparkle_signature, feed: $feed }
+            }' >"$OUTPUT/release-build-facts.json"
+          node scripts/ci/release-build-provenance.mjs \
+            "$OUTPUT/release-build-facts.json" \
+            "$OUTPUT/Breazin.dmg" \
+            Package.resolved \
+            "$OUTPUT/release-build-provenance.json"
+
+      - name: Upload immutable evaluation input
+        uses: actions/upload-artifact@v6
+        with:
+          name: signed-candidate-${{ inputs.channel }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/breazin-release/Breazin.dmg
+            ${{ runner.temp }}/breazin-release/release-build-provenance.json
+            ${{ runner.temp }}/breazin-release/notary/app.json
+            ${{ runner.temp }}/breazin-release/notary/dmg.json
+            ${{ runner.temp }}/breazin-release/codesign.txt
+            ${{ runner.temp }}/breazin-release/sparkle-signature.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: State the remaining authority boundary
+        run: |
+          echo "Signed build created; publicationAuthorized=false."
+          echo "Scenario evaluation, accepted Calibration/Policy, exact-hash finalization,"
+          echo "and a second protected human promotion approval are still required."
+
+      - name: Destroy ephemeral release credentials
+        if: always()
+        run: |
+          if [ -n "${RELEASE_KEYCHAIN:-}" ]; then
+            security delete-keychain "$RELEASE_KEYCHAIN" || true
+          fi
+          rm -f \
+            "${NOTARY_KEY_PATH:-$RUNNER_TEMP/AuthKey.p8}" \
+            "${SPARKLE_KEY_PATH:-$RUNNER_TEMP/sparkle-private-key}" \
+            "$RUNNER_TEMP/developer-id.p12"

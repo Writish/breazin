@@ -3,18 +3,20 @@ set -euo pipefail
 
 # Usage:
 #   scripts/bundle.sh [release|debug]           # ad-hoc signed dev build
-#   scripts/bundle.sh debug --fast              # fastest: skip dSYM + deep sign, just env+build
+#   scripts/bundle.sh debug --fast --without-speech # CI smoke: skip optional speech graph
 #   scripts/bundle.sh release --sign            # build + Developer ID codesign
 #   scripts/bundle.sh release --dist            # build + sign + notarize + staple + DMG
 
 CONFIG="release"
 MODE="dev"
+BUNDLE_SPEECH=1
 for arg in "$@"; do
   case "$arg" in
     release|debug) CONFIG="$arg" ;;
     --fast)        MODE="fast" ;;
     --sign)        MODE="sign" ;;
     --dist)        MODE="dist" ;;
+    --without-speech) BUNDLE_SPEECH=0 ;;
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
 done
@@ -33,34 +35,101 @@ if [ -f "$ROOT/$ENV_FILE" ]; then
   set +a
 fi
 
-SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Palmier, Inc. (MMFLRC7562)}"
-NOTARY_PROFILE="${NOTARY_PROFILE:-palmier-notary}"
+APP_ENV="${BREAZIN_ENVIRONMENT:-development}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+NOTARY_EVIDENCE_DIR="${NOTARY_EVIDENCE_DIR:-}"
+SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
+SPARKLE_SIGNATURE_OUTPUT="${SPARKLE_SIGNATURE_OUTPUT:-}"
 SENTRY_DSN="${SENTRY_DSN:-}"
 POSTHOG_PROJECT_TOKEN="${POSTHOG_PROJECT_TOKEN:-}"
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
-PROVISION_PROFILE="${PROVISION_PROFILE:-$ROOT/scripts/Palmier_Pro_Developer_ID.provisionprofile}"
-ENTITLEMENTS="$ROOT/scripts/PalmierPro.entitlements"
-KEYCHAIN_ACCESS_GROUP="${KEYCHAIN_ACCESS_GROUP:-MMFLRC7562.io.palmier.pro}"
-RESOURCES="$ROOT/Sources/PalmierPro/Resources"
-APP="$ROOT/.build/PalmierPro.app"
-ZIP="$ROOT/.build/PalmierPro.zip"
-DMG="$ROOT/.build/PalmierPro.dmg"
+PROVISION_PROFILE="${PROVISION_PROFILE:-}"
+ENTITLEMENTS="$ROOT/scripts/Breazin.entitlements"
+RESOURCES="$ROOT/Sources/Breazin/Resources"
+OUTPUT_ROOT="${BREAZIN_OUTPUT_DIR:-$ROOT/.build}"
+mkdir -p "$OUTPUT_ROOT"
+APP="$OUTPUT_ROOT/Breazin.app"
+ZIP="$OUTPUT_ROOT/Breazin.zip"
+DMG="$OUTPUT_ROOT/Breazin.dmg"
 
 echo "==> Building ($CONFIG)"
-TRAITS="BundledSpeech"
-if [ "$CONFIG" = "release" ]; then
-  TRAITS="$TRAITS,ProductionTelemetry"
+TRAITS=""
+if [ "$BUNDLE_SPEECH" = "1" ]; then
+  TRAITS="BundledSpeech"
 fi
-BUILD_ARGS=(-c "$CONFIG" --traits "$TRAITS")
+if [ "$CONFIG" = "release" ]; then
+  TRAITS="${TRAITS:+$TRAITS,}ProductionTelemetry"
+fi
+BUILD_ARGS=(-c "$CONFIG")
+if [ -n "$TRAITS" ]; then
+  BUILD_ARGS+=(--traits "$TRAITS")
+fi
 swift build "${BUILD_ARGS[@]}"
-BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/PalmierPro"
+BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/Breazin"
 SPARKLE_FW="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-cp "$BIN" "$APP/Contents/MacOS/PalmierPro"
+cp "$BIN" "$APP/Contents/MacOS/Breazin"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
+
+case "$APP_ENV" in
+  development)
+    DISPLAY_NAME="呼息 Dev"
+    BUNDLE_ID="com.writish.breazin.dev"
+    URL_SCHEME="breazin-dev"
+    PROJECT_UTI="com.writish.breazin.project.dev"
+    MCP_SERVICE_NAME="breazin-dev"
+    MCP_DISPLAY_NAME="Breazin Dev"
+    MCP_PORT="19790"
+    UPDATE_FEED_URL=""
+    ;;
+  staging)
+    DISPLAY_NAME="呼息 Beta"
+    BUNDLE_ID="com.writish.breazin.beta"
+    URL_SCHEME="breazin-beta"
+    PROJECT_UTI="com.writish.breazin.project.beta"
+    MCP_SERVICE_NAME="breazin-beta"
+    MCP_DISPLAY_NAME="Breazin Beta"
+    MCP_PORT="19791"
+    UPDATE_FEED_URL="https://raw.githubusercontent.com/Writish/breazin/main/appcast-beta.xml"
+    ;;
+  production)
+    DISPLAY_NAME="呼息"
+    BUNDLE_ID="com.writish.breazin"
+    URL_SCHEME="breazin"
+    PROJECT_UTI="com.writish.breazin.project"
+    MCP_SERVICE_NAME="breazin"
+    MCP_DISPLAY_NAME="Breazin"
+    MCP_PORT="19789"
+    UPDATE_FEED_URL="https://raw.githubusercontent.com/Writish/breazin/main/appcast.xml"
+    ;;
+  *)
+    echo "unknown BREAZIN_ENVIRONMENT: $APP_ENV" >&2
+    exit 1
+    ;;
+esac
+
+PLIST="$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :BreazinEnvironment $APP_ENV" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLName $BUNDLE_ID" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 $URL_SCHEME" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDocumentTypes:0:LSItemContentTypes:0 $PROJECT_UTI" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :UTExportedTypeDeclarations:0:UTTypeIdentifier $PROJECT_UTI" "$PLIST"
+/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
+if [ -n "$UPDATE_FEED_URL" ] && [ -n "${SPARKLE_PUBLIC_KEY:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks true" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $UPDATE_FEED_URL" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" "$PLIST"
+else
+  /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$PLIST"
+  echo "==> Sparkle disabled for $APP_ENV (SPARKLE_PUBLIC_KEY not set)"
+fi
 
 if [ -n "$SENTRY_DSN" ]; then
   echo "==> Injecting SentryDSN into Info.plist"
@@ -80,25 +149,11 @@ else
   echo "==> POSTHOG_PROJECT_TOKEN not set — product analytics will be a no-op in this build"
 fi
 
-inject_plist() {
-  local key="$1" value="$2"
-  if [ -z "$value" ]; then
-    echo "!! $key not set in $ENV_FILE — app will fatalError on launch" >&2
-    return
-  fi
-  /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP/Contents/Info.plist"
-}
-
-echo "==> Injecting backend config into Info.plist"
-inject_plist PalmierClerkPublishableKey "${CLERK_PUBLISHABLE_KEY:-}"
-inject_plist PalmierConvexDeploymentURL "${CONVEX_DEPLOYMENT_URL:-}"
-inject_plist PalmierConvexHttpURL "${CONVEX_HTTP_URL:-}"
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Flatten SwiftPM's resource bundle into the app's Resources tree.
-RES_BUNDLE="$(dirname "$BIN")/PalmierPro_PalmierPro.bundle"
+RES_BUNDLE="$(dirname "$BIN")/Breazin_Breazin.bundle"
 if [ -d "$RES_BUNDLE/Fonts" ]; then
   cp -R "$RES_BUNDLE/Fonts" "$APP/Contents/Resources/"
 else
@@ -108,28 +163,17 @@ fi
 
 # Ensure the shipped Claude Desktop connector is always up to date with mcpb/ sources.
 MCPB_SRC="$ROOT/mcpb"
-MCPB_CHECKED_IN="$ROOT/Sources/PalmierPro/Resources/MCPB/palmier-pro.mcpb"
-MCPB_FRESH="$(mktemp -d)/palmier-pro.mcpb"
-(cd "$MCPB_SRC" && zip -q -X -r "$MCPB_FRESH" manifest.json icon.png server/index.js server/package.json)
-if ! unzip -p "$MCPB_CHECKED_IN" server/index.js 2>/dev/null | diff -q - <(unzip -p "$MCPB_FRESH" server/index.js) >/dev/null 2>&1 \
-  || ! unzip -p "$MCPB_CHECKED_IN" manifest.json 2>/dev/null | diff -q - <(unzip -p "$MCPB_FRESH" manifest.json) >/dev/null 2>&1; then
-  echo "==> refreshing checked-in palmier-pro.mcpb from mcpb/ sources"
-  cp "$MCPB_FRESH" "$MCPB_CHECKED_IN"
-fi
-cp "$MCPB_FRESH" "$APP/Contents/Resources/palmier-pro.mcpb"
-rm -rf "$(dirname "$MCPB_FRESH")"
+MCPB_WORK="$(mktemp -d)"
+MCPB_FRESH="$MCPB_WORK/breazin.mcpb"
+cp -R "$MCPB_SRC/manifest.json" "$MCPB_SRC/icon.png" "$MCPB_SRC/server" "$MCPB_WORK/"
+sed -i '' -e "s/\"name\": \"breazin\"/\"name\": \"$MCP_SERVICE_NAME\"/" "$MCPB_WORK/manifest.json"
+sed -i '' -e "s/\"display_name\": \"Breazin\"/\"display_name\": \"$MCP_DISPLAY_NAME\"/" "$MCPB_WORK/manifest.json"
+sed -i '' -e "s/\"19789\"/\"$MCP_PORT\"/" "$MCPB_WORK/manifest.json"
+(cd "$MCPB_WORK" && zip -q -X -r "$MCPB_FRESH" manifest.json icon.png server/index.js server/package.json)
+cp "$MCPB_FRESH" "$APP/Contents/Resources/breazin.mcpb"
+rm -rf "$MCPB_WORK"
 if [ -d "$RES_BUNDLE/Images" ]; then
   cp -R "$RES_BUNDLE/Images" "$APP/Contents/Resources/"
-fi
-# .lproj folders must live at the bundle root for macOS to resolve them —
-# flatten out of Resources/Localization/ even though that's just an org folder.
-if [ -d "$RES_BUNDLE/Localization" ]; then
-  for locale_dir in "$RES_BUNDLE/Localization"/*.lproj; do
-    [ -d "$locale_dir" ] && cp -R "$locale_dir" "$APP/Contents/Resources/"
-  done
-else
-  echo "!! missing Localization/ in SwiftPM resource bundle at $RES_BUNDLE" >&2
-  exit 1
 fi
 if [ -d "$RES_BUNDLE/Changelog" ]; then
   cp -R "$RES_BUNDLE/Changelog" "$APP/Contents/Resources/"
@@ -150,33 +194,75 @@ if ! ls "$RES_BUNDLE"/*.metallib >/dev/null 2>&1; then
 fi
 cp "$RES_BUNDLE"/*.metallib "$APP/Contents/Resources/"
 
-MLX_METALLIB="$ROOT/.build/$CONFIG/mlx.metallib"
-if [ ! -f "$MLX_METALLIB" ]; then
-  echo "==> Building MLX metallib ($CONFIG)"
-  BUILD_DIR="$ROOT/.build" "$ROOT/.build/checkouts/speech-swift/scripts/build_mlx_metallib.sh" "$CONFIG"
+if [ "$BUNDLE_SPEECH" = "1" ]; then
+  MLX_METALLIB="$ROOT/.build/$CONFIG/mlx.metallib"
+  if [ ! -f "$MLX_METALLIB" ]; then
+    echo "==> Building MLX metallib ($CONFIG)"
+    BUILD_DIR="$ROOT/.build" "$ROOT/.build/checkouts/speech-swift/scripts/build_mlx_metallib.sh" "$CONFIG"
+  fi
+  if [ ! -f "$MLX_METALLIB" ]; then
+    echo "!! missing $MLX_METALLIB — on-device speech features (VAD, speaker ID) would die silently" >&2
+    exit 1
+  fi
+  mkdir -p "$APP/Contents/Resources/mlx-swift_Cmlx.bundle"
+  cp "$MLX_METALLIB" "$APP/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib"
+else
+  echo "==> Bundled speech disabled for this smoke build"
 fi
-if [ ! -f "$MLX_METALLIB" ]; then
-  echo "!! missing $MLX_METALLIB — on-device speech features (VAD, speaker ID) would die silently" >&2
-  exit 1
-fi
-mkdir -p "$APP/Contents/Resources/mlx-swift_Cmlx.bundle"
-cp "$MLX_METALLIB" "$APP/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib"
 
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/PalmierPro"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Breazin"
 touch "$APP"
 
+# iCloud/File Provider workspaces can recreate Finder metadata immediately after
+# it is cleared. Stage codesigning on a local volume, then copy back without
+# resource forks so the repository can live under Documents/iCloud safely.
+ASSEMBLED_APP="$APP"
+OUTPUT_APP="${BREAZIN_OUTPUT_APP:-$ASSEMBLED_APP}"
+case "$OUTPUT_APP" in
+  /*.app) ;;
+  *)
+    echo "!! BREAZIN_OUTPUT_APP must be an absolute .app path" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$(dirname "$OUTPUT_APP")"
+CODESIGN_WORK="$(mktemp -d /tmp/breazin-codesign.XXXXXX)"
+STAGED_APP="$CODESIGN_WORK/Breazin.app"
+ditto --norsrc "$ASSEMBLED_APP" "$STAGED_APP"
+rm -rf "$ASSEMBLED_APP"
+APP="$STAGED_APP"
+xattr -cr "$APP"
+find "$APP" -exec xattr -d com.apple.FinderInfo {} \; 2>/dev/null || true
+find "$APP" -exec xattr -d com.apple.ResourceFork {} \; 2>/dev/null || true
+
+publish_app() {
+  rm -rf "$OUTPUT_APP"
+  ditto --norsrc "$APP" "$OUTPUT_APP"
+  # Documents/iCloud may attach FinderInfo to nested bundle entries while the
+  # copy is in progress, so clear the published tree rather than only its root.
+  xattr -cr "$OUTPUT_APP"
+  find "$OUTPUT_APP" -exec xattr -d com.apple.FinderInfo {} \; 2>/dev/null || true
+  find "$OUTPUT_APP" -exec xattr -d com.apple.ResourceFork {} \; 2>/dev/null || true
+  codesign --verify --deep --strict --verbose=2 "$OUTPUT_APP"
+  rm -rf "$CODESIGN_WORK"
+  APP="$OUTPUT_APP"
+}
+
 if [ "$MODE" = "fast" ]; then
-  echo "==> Codesigning main app with $SIGNING_IDENTITY (no timestamp, no helpers)"
-  codesign --force --sign "$SIGNING_IDENTITY" "$APP"
+  echo "==> Codesigning main app with $SIGNING_IDENTITY"
+  # Fast mode is an ad-hoc/CI artifact. Sign the embedded Sparkle code as well so
+  # a fresh checkout can pass a strict deep verification without release keys.
+  codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
-  echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
+  publish_app
+  echo "==> Done: $APP (fast mode, no dSYM)"
   exit 0
 fi
 
-DSYM="$ROOT/.build/PalmierPro.dSYM"
+DSYM="$ROOT/.build/Breazin.dSYM"
 echo "==> Generating dSYM"
 rm -rf "$DSYM"
-dsymutil "$APP/Contents/MacOS/PalmierPro" -o "$DSYM"
+dsymutil "$APP/Contents/MacOS/Breazin" -o "$DSYM"
 
 upload_dsyms() {
   if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
@@ -196,8 +282,14 @@ if [ "$MODE" = "dev" ]; then
   codesign --force --deep --sign - "$APP"
   codesign --verify --strict --verbose=2 "$APP"
   upload_dsyms
+  publish_app
   echo "==> Done: $APP (ad-hoc signed)"
   exit 0
+fi
+
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+  echo "!! SIGNING_IDENTITY is required for --sign and --dist" >&2
+  exit 1
 fi
 
 echo "==> Codesigning nested Sparkle helpers"
@@ -218,14 +310,14 @@ codesign --force --options runtime --timestamp \
   --sign "$SIGNING_IDENTITY" \
   "$APP/Contents/Frameworks/Sparkle.framework"
 
-echo "==> Embedding provisioning profile + keychain access group"
-if [ ! -f "$PROVISION_PROFILE" ]; then
-  echo "!! provisioning profile not found at $PROVISION_PROFILE" >&2
-  exit 1
+if [ -n "$PROVISION_PROFILE" ]; then
+  if [ ! -f "$PROVISION_PROFILE" ]; then
+    echo "!! provisioning profile not found at $PROVISION_PROFILE" >&2
+    exit 1
+  fi
+  echo "==> Embedding provisioning profile"
+  cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
 fi
-cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
-inject_plist PalmierClerkKeychainAccessGroup "$KEYCHAIN_ACCESS_GROUP"
-
 echo "==> Codesigning main app"
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \
@@ -234,18 +326,37 @@ codesign --force --options runtime --timestamp \
 codesign --verify --strict --verbose=2 "$APP"
 
 if [ "$MODE" = "sign" ]; then
+  publish_app
   echo "==> Done: $APP (signed, not notarized)"
   exit 0
 fi
 
 echo "==> Zipping .app for notarization"
+if [ -z "$NOTARY_PROFILE" ]; then
+  echo "!! NOTARY_PROFILE is required for --dist" >&2
+  exit 1
+fi
 rm -f "$ZIP"
 /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
 
 echo "==> Submitting to Apple notary (this can take several minutes)"
-xcrun notarytool submit "$ZIP" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --wait
+submit_notary() {
+  local artifact="$1" label="$2"
+  if [ -n "$NOTARY_EVIDENCE_DIR" ]; then
+    mkdir -p "$NOTARY_EVIDENCE_DIR"
+    xcrun notarytool submit "$artifact" \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --wait \
+      --output-format json |
+      tee "$NOTARY_EVIDENCE_DIR/$label.json"
+  else
+    xcrun notarytool submit "$artifact" \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --wait
+  fi
+}
+
+submit_notary "$ZIP" "app"
 
 echo "==> Stapling ticket to .app"
 xcrun stapler staple "$APP"
@@ -254,11 +365,11 @@ rm -f "$ZIP"
 echo "==> Building DMG"
 rm -f "$DMG"
 STAGING="$(mktemp -d)"
-cp -R "$APP" "$STAGING/PalmierPro.app"
+cp -R "$APP" "$STAGING/Breazin.app"
 ln -s /Applications "$STAGING/Applications"
 cp "$RESOURCES/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
 hdiutil create \
-  -volname "PalmierPro" \
+  -volname "Breazin" \
   -srcfolder "$STAGING" \
   -ov -format UDZO \
   "$DMG"
@@ -268,17 +379,33 @@ echo "==> Codesigning DMG"
 codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG"
 
 echo "==> Submitting DMG to notary"
-xcrun notarytool submit "$DMG" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --wait
+submit_notary "$DMG" "dmg"
 
 echo "==> Stapling DMG"
 xcrun stapler staple "$DMG"
 
 upload_dsyms
 
+publish_app
+
 echo "==> Signing DMG with Sparkle EdDSA key"
-SPARKLE_SIG="$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$DMG")"
+if [ -n "$SPARKLE_PRIVATE_KEY_FILE" ]; then
+  if [ ! -f "$SPARKLE_PRIVATE_KEY_FILE" ]; then
+    echo "!! SPARKLE_PRIVATE_KEY_FILE does not exist" >&2
+    exit 1
+  fi
+  SPARKLE_SIG="$(
+    "$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" \
+      --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+      -p \
+      "$DMG"
+  )"
+else
+  SPARKLE_SIG="$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$DMG")"
+fi
+if [ -n "$SPARKLE_SIGNATURE_OUTPUT" ]; then
+  printf '%s\n' "$SPARKLE_SIG" >"$SPARKLE_SIGNATURE_OUTPUT"
+fi
 
 echo ""
 echo "==> Done"

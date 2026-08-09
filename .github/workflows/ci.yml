@@ -9,24 +9,194 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  change-contract:
+    name: Change Contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify PR change contract
+        run: scripts/ci/verify-change-contract.sh
+
+  approved-repair-contract:
+    name: Approved Repair Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --check scripts/ci/approved-repair-contract.mjs
+      - run: node --check scripts/ci/repair-evaluation-request.mjs
+      - run: node --check scripts/ci/prepare-repair-evaluation-request.mjs
+      - run: node --check scripts/ci/verify-approved-repair.mjs
+      - run: node --check scripts/ci/verify-repair-scope.mjs
+      - run: node --test scripts/ci/approved-repair-contract.test.mjs scripts/ci/repair-evaluation-request.test.mjs
+
   build-test:
     name: Build & Test
-    # PalmierPro targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
+    # Breazin targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Show toolchain
         run: swift --version
 
+      - name: Ensure Metal toolchain
+        run: |
+          if ! xcrun --toolchain Metal --find metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --toolchain Metal --find metal
+
       - name: Cache SwiftPM
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .build
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: Ensure ripgrep
+        run: command -v rg >/dev/null || brew install ripgrep
+
+      - name: Verify product identity
+        run: scripts/ci/verify-branding.sh
+
+      - name: Build
+        run: swift build
+
       - name: Test
         run: swift test
+
+      - name: Assemble development app
+        env:
+          BREAZIN_ENVIRONMENT: development
+        run: scripts/bundle.sh debug --fast --without-speech
+
+      - name: Smoke-test bundle
+        run: scripts/ci/verify-bundle.sh .build/Breazin.app development
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5
+
+  release-build-contract:
+    name: Release Build Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: bash -n scripts/bundle.sh
+      - run: node --check scripts/ci/release-build-provenance.mjs
+      - run: node --check scripts/ci/release-promotion.mjs
+      - run: node --test scripts/ci/release-build-provenance.test.mjs scripts/ci/release-promotion.test.mjs
+
+  artifact_runtime_producer:
+    name: Artifact Runtime Producer
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Create bounded runtime probe
+        run: |
+          mkdir -p artifact-runtime
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schemaVersion: 1,
+              repository: $repository,
+              commit: $commit,
+              runId: $runId,
+              runAttempt: $runAttempt,
+              containsUserData: false,
+              publicationAuthorized: false
+            }' > artifact-runtime/probe.json
+          shasum -a 256 artifact-runtime/probe.json > artifact-runtime/probe.sha256
+      - id: upload
+        name: Upload bounded runtime probe
+        uses: actions/upload-artifact@v6
+        with:
+          name: actions-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifact-runtime/
+          if-no-files-found: error
+          retention-days: 1
+
+  artifact_runtime_consumer:
+    name: Artifact Runtime Consumer
+    needs: artifact_runtime_producer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact runtime probe
+        uses: actions/download-artifact@v7
+        with:
+          name: actions-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifact-runtime
+      - name: Verify probe identity and content
+        env:
+          ARTIFACT_DIGEST: ${{ needs.artifact_runtime_producer.outputs.artifact_digest }}
+        run: |
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          shasum -a 256 -c artifact-runtime/probe.sha256
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '.repository == $repository
+              and .commit == $commit
+              and .runId == $runId
+              and .runAttempt == $runAttempt
+              and .containsUserData == false
+              and .publicationAuthorized == false' \
+            artifact-runtime/probe.json
+
+  repair-evaluation-request:
+    name: Repair Evaluation Request
+    if: >-
+      github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'repair/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: [approved-repair-contract, build-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Prepare exact evidence-empty L2 request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/ci/prepare-repair-evaluation-request.mjs
+          repair-evaluation-request.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: repair-evaluation-request-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: repair-evaluation-request.json
+          if-no-files-found: error
+          retention-days: 14

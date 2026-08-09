@@ -3,10 +3,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "PalmierPro",
+    name: "Breazin",
     platforms: [.macOS(.v26)],
     products: [
-        .executable(name: "PalmierPro", targets: ["PalmierPro"]),
+        .executable(name: "Breazin", targets: ["Breazin"]),
     ],
     traits: [
         .trait(name: "BundledSpeech", description: "Include on-device speech models and MLX."),
@@ -17,9 +17,6 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.21.0"),
         .package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.64.4"),
-        .package(url: "https://github.com/clerk/clerk-convex-swift", from: "0.1.0"),
-        .package(url: "https://github.com/clerk/clerk-ios", from: "1.2.1"),
-        .package(url: "https://github.com/get-convex/convex-swift", from: "0.8.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
         .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.5"),
         .package(url: "https://github.com/airbnb/lottie-ios", from: "4.6.1"),
@@ -27,7 +24,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "PalmierPro",
+            name: "Breazin",
             dependencies: [
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "Sparkle", package: "Sparkle"),
@@ -41,9 +38,6 @@ let package = Package(
                     package: "posthog-ios",
                     condition: .when(traits: ["ProductionTelemetry"])
                 ),
-                .product(name: "ClerkConvex", package: "clerk-convex-swift"),
-                .product(name: "ClerkKit", package: "clerk-ios"),
-                .product(name: "ConvexMobile", package: "convex-swift"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "Lottie", package: "lottie-ios"),
                 .product(
@@ -62,35 +56,42 @@ let package = Package(
                     condition: .when(traits: ["BundledSpeech"])
                 ),
             ],
-            path: "Sources/PalmierPro",
+            path: "Sources/Breazin",
             exclude: [
                 "Resources/Info.plist",
                 "Resources/AppIcon.icon",
+                "Resources/AppIcon.xcassets",
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.png",
+                "Agent/AGENTS.md",
+                "Generation/AGENTS.md",
+                "Project/AGENTS.md",
             ],
             resources: [
                 .copy("Resources/Fonts"),
-                .copy("Resources/MCPB/palmier-pro.mcpb"),
+                .copy("Resources/MCPB/breazin.mcpb"),
                 .copy("Resources/Images"),
                 .copy("Resources/Changelog"),
-                .copy("Resources/Localization"),
                 .copy("Resources/Models"),
             ],
             swiftSettings: [
                 .define("BUNDLED_SPEECH", .when(traits: ["BundledSpeech"])),
                 .define("PRODUCTION_TELEMETRY", .when(traits: ["ProductionTelemetry"])),
             ],
+            linkerSettings: [.linkedLibrary("sqlite3")],
             plugins: ["MetalCIKernelPlugin"]
         ),
         .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
         .testTarget(
-            name: "PalmierProTests",
+            name: "BreazinTests",
             dependencies: [
-                "PalmierPro",
+                "Breazin",
                 .product(name: "MCP", package: "swift-sdk"),
             ],
-            path: "Tests/PalmierProTests"
+            path: "Tests/BreazinTests",
+            resources: [
+                .copy("Fixtures"),
+            ]
         ),
     ]
 )
